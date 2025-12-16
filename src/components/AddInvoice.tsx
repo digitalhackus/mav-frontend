@@ -617,7 +617,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       const plateNo = selectedVehicle?.plateNo || selectedVehicle?.plate || '';
       const customerName = selectedCustomer?.name || '';
       const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-      const invoiceId = plateNo && initials ? `${plateNo}-${initials}` : '';
+      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceNumber;
       
       doc.text(`DATE: ${dateStr.toUpperCase()}`, margin, currentY + 30);
       doc.text(`TIME: ${timeStr.toUpperCase()}`, margin, currentY + 36);
@@ -802,11 +802,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         }
       }
 
-      // Generate invoice ID from plate number and customer name initials
-      const plateNo = selectedVehicle?.plateNo || selectedVehicle?.plate || '';
-      const customerName = selectedCustomer?.name || '';
-      const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceNumber;
+      // Reuse invoiceId already declared above for PDF filename
       doc.save(`Invoice-${invoiceId}.pdf`);
       success = true;
     } catch (error) {

@@ -329,7 +329,7 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
       const customerName = invoice.customer || '';
       const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-      const invoiceId = plateNo && initials ? `${plateNo}-${initials}` : '';
+      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : `INV-${invoice.id.padStart(6, '0')}`;
       
       doc.text(`DATE: ${dateStr.toUpperCase()}`, margin, currentY + 30);
       doc.text(`TIME: ${timeStr.toUpperCase()}`, margin, currentY + 36);
@@ -522,10 +522,7 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
         doc.text("GENERAL MANAGER", footerRightX, currentY + 35, { align: "right" });
       }
 
-      const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
-      const customerName = invoice.customer || '';
-      const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : `INV-${invoice.id.padStart(6, '0')}`;
+      // Reuse invoiceId already declared above for PDF filename
       doc.save(`Invoice-${invoiceId}.pdf`);
       setShowPreviewModal(false);
     } catch (error) {

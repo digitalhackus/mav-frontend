@@ -187,7 +187,7 @@ export function InvoicePreviewModal({
       const plateNo = invoiceData.vehicle?.plateNo || invoiceData.vehicle?.plate || '';
       const customerName = invoiceData.customer?.name || '';
       const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-      const invoiceId = plateNo && initials ? `${plateNo}-${initials}` : '';
+      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceData.invoiceNumber;
       
       doc.text(`Date: ${dateStr}`, pageWidth - margin, currentY + 18, { align: "right" });
       doc.text(`Time: ${timeStr}`, pageWidth - margin, currentY + 25, { align: "right" });
@@ -314,11 +314,9 @@ export function InvoicePreviewModal({
       doc.text(businessProfile.email.toUpperCase(), footerRightX, footerY + 6, { align: "right" });
       doc.text(`OR ${businessProfile.phone}.`, footerRightX, footerY + 12, { align: "right" });
 
-      const plateNo = invoiceData.vehicle?.plateNo || invoiceData.vehicle?.plate || '';
-      const customerName = invoiceData.customer?.name || '';
-      const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceData.invoiceNumber;
-      doc.save(`Invoice-${invoiceId}.pdf`);
+      // Reuse invoiceId already declared above for PDF filename
+      const finalInvoiceId = invoiceId || invoiceData.invoiceNumber;
+      doc.save(`Invoice-${finalInvoiceId}.pdf`);
       toast.success("Invoice downloaded successfully");
     } catch (error) {
       console.error("Failed to generate invoice", error);

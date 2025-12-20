@@ -27,7 +27,7 @@ import {
 } from "./ui/select";
 import { Badge } from "./ui/badge";
 import { Plus, Edit, Trash2, Package, Loader2, AlertTriangle } from "lucide-react";
-import { inventoryAPI } from "../api/client";
+import { inventoryAPI, catalogAPI } from "../api/client";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -42,6 +42,8 @@ interface InventoryItem {
   costPrice: number;
   salePrice: number;
   isActive: boolean;
+  isFromCatalog?: boolean;
+  catalogId?: string;
 }
 
 export function Inventory() {
@@ -74,14 +76,67 @@ export function Inventory() {
   const fetchInventory = async () => {
     try {
       setLoading(true);
-      const response = await inventoryAPI.getAll(
-        searchTerm || undefined,
-        categoryFilter !== "all" ? categoryFilter : undefined,
-        lowStockOnly
-      );
-      if (response.success) {
-        setItems(response.data);
-      }
+      
+      // Fetch both inventory items and catalog products
+      const [inventoryResponse, catalogResponse] = await Promise.all([
+        inventoryAPI.getAll(
+          searchTerm || undefined,
+          categoryFilter !== "all" ? categoryFilter : undefined,
+          lowStockOnly
+        ),
+        catalogAPI.getByType('product')
+      ]);
+
+      const inventoryItems: InventoryItem[] = inventoryResponse.success ? inventoryResponse.data : [];
+      const catalogProducts = catalogResponse.success ? catalogResponse.data : [];
+
+      // Convert catalog products to inventory item format
+      const productsFromCatalog: InventoryItem[] = catalogProducts.map((product: any) => ({
+        _id: product._id || product.id,
+        name: product.name,
+        sku: product.sku || '',
+        category: product.category || '',
+        unit: product.unit || 'piece',
+        currentStock: product.quantity || 0,
+        minStock: 0, // Default min stock
+        costPrice: product.cost || 0,
+        salePrice: product.basePrice || product.cost || 0,
+        isActive: product.isActive !== false,
+        isFromCatalog: true, // Flag to identify catalog products
+        catalogId: product._id || product.id
+      }));
+
+      // Merge inventory items and catalog products
+      // If a product exists in both, prefer the inventory item (more detailed)
+      const mergedItems: InventoryItem[] = [...inventoryItems];
+      
+      catalogProducts.forEach((product: any) => {
+        // Check if this product already exists in inventory (by name or catalog link)
+        const existingIndex = mergedItems.findIndex(item => 
+          item.name.toLowerCase() === product.name.toLowerCase() ||
+          (item as any).catalogId === (product._id || product.id)
+        );
+        
+        if (existingIndex === -1) {
+          // Add catalog product as new inventory item
+          mergedItems.push({
+            _id: product._id || product.id,
+            name: product.name,
+            sku: product.sku || '',
+            category: product.category || '',
+            unit: product.unit || 'piece',
+            currentStock: product.quantity || 0,
+            minStock: 0,
+            costPrice: product.cost || 0,
+            salePrice: product.basePrice || product.cost || 0,
+            isActive: product.isActive !== false,
+            isFromCatalog: true,
+            catalogId: product._id || product.id
+          });
+        }
+      });
+
+      setItems(mergedItems);
     } catch (error: any) {
       console.error("Failed to fetch inventory:", error);
       toast.error(error.message || "Failed to load inventory");

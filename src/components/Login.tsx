@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -16,9 +16,12 @@ export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [otp, setOtp] = useState("");
   const [userId, setUserId] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -27,21 +30,63 @@ export function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [forgotPasswordMethod, setForgotPasswordMethod] = useState<'email' | 'phone'>('email');
+
+  // Load remembered credentials on mount
+  useEffect(() => {
+    const rememberedEmail = localStorage.getItem('mw_remembered_email');
+    const rememberedPassword = localStorage.getItem('mw_remembered_password');
+    if (rememberedEmail && rememberedPassword) {
+      setEmail(rememberedEmail);
+      setPassword(rememberedPassword);
+      setRememberMe(true);
+    }
+  }, []);
+
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setEmailError("");
+    setPasswordError("");
     setLoading(true);
 
-    try {
-      if (!email || !password) {
-        setError("Please enter email and password");
-        setLoading(false);
-        return;
-      }
+    // Custom validation
+    let hasError = false;
+    if (!email) {
+      setEmailError("Please fill in this field");
+      hasError = true;
+    } else if (!validateEmail(email)) {
+      setEmailError("Please enter a valid email address");
+      hasError = true;
+    }
+    
+    if (!password) {
+      setPasswordError("Please fill in this field");
+      hasError = true;
+    }
 
+    if (hasError) {
+      setLoading(false);
+      return;
+    }
+
+    try {
       const response = await authAPI.login(email, password);
       if (response.success && response.user && response.accessToken) {
+        // Save credentials if remember me is checked
+        if (rememberMe) {
+          localStorage.setItem('mw_remembered_email', email);
+          localStorage.setItem('mw_remembered_password', password);
+        } else {
+          localStorage.removeItem('mw_remembered_email');
+          localStorage.removeItem('mw_remembered_password');
+        }
+        
         // Use AuthContext login method to store token and user
         authLogin(response.accessToken, response.user);
         // Redirect to dashboard
@@ -51,7 +96,14 @@ export function Login() {
         setView('verification');
         setError("Please verify your email first");
       } else {
-        setError(response.error || "Login failed. Please try again.");
+        // Handle specific error types
+        if (response.errorType === 'email') {
+          setEmailError(response.error || "Email not found");
+        } else if (response.errorType === 'password') {
+          setPasswordError(response.error || "Incorrect password");
+        } else {
+          setError(response.error || "Login failed. Please try again.");
+        }
       }
     } catch (err: any) {
       setError(err.message || "Login failed. Please try again.");
@@ -63,22 +115,40 @@ export function Login() {
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setEmailError("");
+    setPasswordError("");
     setLoading(true);
 
+    // Custom validation
+    let hasError = false;
+    if (!name) {
+      setError("Please fill in all fields");
+      hasError = true;
+    }
+    
+    if (!email) {
+      setEmailError("Please fill in this field");
+      hasError = true;
+    } else if (!validateEmail(email)) {
+      setEmailError("Please enter a valid email address");
+      hasError = true;
+    }
+    
+    if (!password) {
+      setPasswordError("Please fill in this field");
+      hasError = true;
+    } else if (password.length < 8) {
+      setPasswordError("Password must be at least 8 characters");
+      hasError = true;
+    }
+
+    if (hasError) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      if (!name || !email || !password) {
-        setError("Please fill in all fields");
-        setLoading(false);
-        return;
-      }
-
-      if (password.length < 8) {
-        setError("Password must be at least 8 characters");
-        setLoading(false);
-        return;
-      }
-
-      const response = await authAPI.signup(name, email, password);
+      const response = await authAPI.signup(name, email, password, phone);
       if (response.success && response.user) {
         // Store userId and switch to verification view
         setUserId(response.user.id);
@@ -161,23 +231,45 @@ export function Login() {
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setEmailError("");
     setLoading(true);
 
     try {
-      if (!email) {
-        setError("Please enter your email");
-        setLoading(false);
-        return;
+      if (forgotPasswordMethod === 'email') {
+        if (!email) {
+          setEmailError("Please enter your email");
+          setLoading(false);
+          return;
+        }
+        if (!validateEmail(email)) {
+          setEmailError("Please enter a valid email address");
+          setLoading(false);
+          return;
+        }
+      } else {
+        if (!phone) {
+          setError("Please enter your phone number");
+          setLoading(false);
+          return;
+        }
       }
 
-      const response = await authAPI.forgotPassword(email);
+      const response = await authAPI.forgotPassword(
+        forgotPasswordMethod === 'email' ? email : phone,
+        forgotPasswordMethod
+      );
       if (response.success) {
         if (response.userId) {
           setUserId(response.userId);
         }
+        // Use the account email for OTP (from backend response)
+        if (response.accountEmail) {
+          setEmail(response.accountEmail);
+        }
         setView('reset-password');
         setError("");
-        alert("Password reset OTP sent! Please check your email. If email is not configured, check the server console for the OTP.");
+        const method = forgotPasswordMethod === 'email' ? 'email' : 'phone';
+        alert(`Password reset OTP sent to your ${method}! Please check your ${method === 'email' ? 'email' : 'phone'}. If email is not configured, check the server console for the OTP.`);
       } else {
         setError(response.error || "Failed to send reset OTP. Please try again.");
       }
@@ -250,6 +342,7 @@ export function Login() {
           
           {/* Social Icons */}
           <div className="flex flex-col items-center gap-6">
+            <h2 className="text-white text-sm font-semibold tracking-wide">Follow Momentum Auto Works</h2>
             <div className="flex gap-4">
               <a 
                 href="https://www.facebook.com/people/Momentum-Auto-Works/61581450630950/#" 
@@ -283,7 +376,7 @@ export function Login() {
 
           {/* Verification View */}
           {view === 'verification' && (
-            <form onSubmit={handleVerifyEmail} className="space-y-5">
+            <form onSubmit={handleVerifyEmail} noValidate className="space-y-5">
               <div className="text-center mb-6">
                 <h2 className="text-2xl font-semibold text-gray-800 mb-2">Verify Your Email</h2>
                 <p className="text-sm text-gray-600">
@@ -364,11 +457,11 @@ export function Login() {
 
           {/* Forgot Password View */}
           {view === 'forgot-password' && (
-            <form onSubmit={handleForgotPassword} className="space-y-5">
+            <form onSubmit={handleForgotPassword} noValidate className="space-y-5">
               <div className="text-center mb-6">
                 <h2 className="text-2xl font-semibold text-gray-800 mb-2">Forgot Password</h2>
                 <p className="text-sm text-gray-600">
-                  Enter your email address and we'll send you a password reset OTP.
+                  Enter your email address or phone number and we'll send you a password reset OTP.
                 </p>
               </div>
 
@@ -378,16 +471,58 @@ export function Login() {
                 </div>
               )}
 
-              <div>
-                <Input
-                  type="email"
-                  placeholder="Email"
-                  className="h-12 bg-gray-50 border-gray-200"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
+              <div className="flex gap-2 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setForgotPasswordMethod('email')}
+                  className={`flex-1 py-2 px-4 rounded text-sm font-medium transition-colors ${
+                    forgotPasswordMethod === 'email'
+                      ? 'bg-[#c53032] text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Email
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForgotPasswordMethod('phone')}
+                  className={`flex-1 py-2 px-4 rounded text-sm font-medium transition-colors ${
+                    forgotPasswordMethod === 'phone'
+                      ? 'bg-[#c53032] text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Phone
+                </button>
               </div>
+
+              {forgotPasswordMethod === 'email' ? (
+                <div>
+                  <Input
+                    type="email"
+                    placeholder="Email"
+                    className={`h-12 bg-gray-50 border-gray-200 ${emailError ? 'border-red-500' : ''}`}
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setEmailError("");
+                    }}
+                  />
+                  {emailError && (
+                    <p className="mt-1 text-sm text-red-600">{emailError}</p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <Input
+                    type="tel"
+                    placeholder="Phone Number"
+                    className="h-12 bg-gray-50 border-gray-200"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+              )}
 
               <Button 
                 type="submit" 
@@ -403,6 +538,7 @@ export function Login() {
                   onClick={() => {
                     setView('login');
                     setError("");
+                    setEmailError("");
                   }}
                   className="text-sm text-gray-600 hover:text-[#c53032] hover:underline flex items-center justify-center gap-1"
                 >
@@ -415,18 +551,18 @@ export function Login() {
 
           {/* Reset Password View */}
           {view === 'reset-password' && (
-            <form onSubmit={handleResetPassword} className="space-y-5">
+            <form onSubmit={handleResetPassword} noValidate className="space-y-5">
               <div className="text-center mb-6">
                 <h2 className="text-2xl font-semibold text-gray-800 mb-2">Reset Password</h2>
                 <p className="text-sm text-gray-600">
-                  Enter the OTP sent to your email and your new password.
+                  Enter the OTP sent to your account email and your new password.
                 </p>
                 <p className="text-xs text-blue-600 mt-2 font-medium">
                   💡 Tip: If email is not configured, check the server console/terminal for the OTP
                 </p>
                 {email && (
                   <p className="text-xs text-gray-500 mt-1">
-                    OTP sent to: <span className="font-medium text-[#c53032]">{email}</span>
+                    OTP sent to your account email: <span className="font-medium text-[#c53032]">{email}</span>
                   </p>
                 )}
               </div>
@@ -527,34 +663,39 @@ export function Login() {
 
           {/* Login Form */}
           {view === 'login' && (
-            <form onSubmit={handleLogin} className="space-y-5">
+            <form onSubmit={handleLogin} noValidate className="space-y-5">
               {error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded text-red-600 text-sm">
                   {error}
                 </div>
               )}
 
-              {/* Signup name field removed */}
-
               <div>
                 <Input
                   type="email"
                   placeholder="Email"
-                  className="h-12 bg-gray-50 border-gray-200"
+                  className={`h-12 bg-gray-50 border-gray-200 ${emailError ? 'border-red-500' : ''}`}
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setEmailError("");
+                  }}
                 />
+                {emailError && (
+                  <p className="mt-1 text-sm text-red-600">{emailError}</p>
+                )}
               </div>
 
               <div className="relative">
                 <Input
                   type={showPassword ? "text" : "password"}
                   placeholder="Password"
-                  className="h-12 bg-gray-50 border-gray-200 pr-10"
+                  className={`h-12 bg-gray-50 border-gray-200 pr-10 ${passwordError ? 'border-red-500' : ''}`}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setPasswordError("");
+                  }}
                 />
                 <button
                   type="button"
@@ -568,37 +709,38 @@ export function Login() {
                     <Eye className="h-5 w-5" />
                   )}
                 </button>
+                {passwordError && (
+                  <p className="mt-1 text-sm text-red-600">{passwordError}</p>
+                )}
               </div>
 
-              {view === 'login' && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="remember"
-                        checked={rememberMe}
-                        onCheckedChange={(checked: boolean) => setRememberMe(checked)}
-                      />
-                      <label
-                        htmlFor="remember"
-                        className="text-sm text-gray-600 cursor-pointer"
-                      >
-                        Remember me
-                      </label>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setView('forgot-password');
-                        setError("");
-                      }}
-                      className="text-sm text-[#c53032] hover:text-[#a6212a] hover:underline"
-                    >
-                      Forgot Password?
-                    </button>
-                  </div>
-                </>
-              )}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="remember"
+                    checked={rememberMe}
+                    onCheckedChange={(checked: boolean) => setRememberMe(checked as boolean)}
+                  />
+                  <label
+                    htmlFor="remember"
+                    className="text-sm text-gray-600 cursor-pointer"
+                  >
+                    Remember me
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView('forgot-password');
+                    setError("");
+                    setEmailError("");
+                    setPasswordError("");
+                  }}
+                  className="text-sm text-[#c53032] hover:text-[#a6212a] hover:underline"
+                >
+                  Forgot Password?
+                </button>
+              </div>
 
               <Button
                 type="submit"
@@ -608,7 +750,131 @@ export function Login() {
                 {loading ? "Please wait..." : "LOGIN"}
               </Button>
 
-              {/* Signup option disabled */}
+              <div className="text-center pt-2">
+                <p className="text-sm text-gray-600">
+                  Don't have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setView('signup');
+                      setError("");
+                      setEmailError("");
+                      setPasswordError("");
+                    }}
+                    className="text-sm text-[#c53032] hover:text-[#a6212a] hover:underline font-medium"
+                  >
+                    Create Account
+                  </button>
+                </p>
+              </div>
+            </form>
+          )}
+
+          {/* Signup Form */}
+          {view === 'signup' && (
+            <form onSubmit={handleSignup} noValidate className="space-y-5">
+              <div className="text-center mb-6">
+                <h2 className="text-2xl font-semibold text-gray-800 mb-2">Create Account</h2>
+                <p className="text-sm text-gray-600">
+                  Sign up to get started with Momentum POS
+                </p>
+              </div>
+
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded text-red-600 text-sm">
+                  {error}
+                </div>
+              )}
+
+              <div>
+                <Input
+                  type="text"
+                  placeholder="Full Name"
+                  className="h-12 bg-gray-50 border-gray-200"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <Input
+                  type="email"
+                  placeholder="Email"
+                  className={`h-12 bg-gray-50 border-gray-200 ${emailError ? 'border-red-500' : ''}`}
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setEmailError("");
+                  }}
+                />
+                {emailError && (
+                  <p className="mt-1 text-sm text-red-600">{emailError}</p>
+                )}
+              </div>
+
+              <div>
+                <Input
+                  type="tel"
+                  placeholder="Phone Number (Optional)"
+                  className="h-12 bg-gray-50 border-gray-200"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
+              </div>
+
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Password"
+                  className={`h-12 bg-gray-50 border-gray-200 pr-10 ${passwordError ? 'border-red-500' : ''}`}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setPasswordError("");
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-5 w-5" />
+                  ) : (
+                    <Eye className="h-5 w-5" />
+                  )}
+                </button>
+                {passwordError && (
+                  <p className="mt-1 text-sm text-red-600">{passwordError}</p>
+                )}
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full h-12 bg-[#c53032] hover:bg-[#a6212a] text-white"
+                disabled={loading}
+              >
+                {loading ? "Creating Account..." : "SIGN UP"}
+              </Button>
+
+              <div className="text-center pt-2">
+                <p className="text-sm text-gray-600">
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setView('login');
+                      setError("");
+                      setEmailError("");
+                      setPasswordError("");
+                    }}
+                    className="text-sm text-[#c53032] hover:text-[#a6212a] hover:underline font-medium"
+                  >
+                    Login
+                  </button>
+                </p>
+              </div>
             </form>
           )}
         </div>

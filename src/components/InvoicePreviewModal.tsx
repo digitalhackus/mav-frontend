@@ -479,22 +479,10 @@ export function InvoicePreviewModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-6xl max-h-[95vh] overflow-hidden flex flex-col p-0">
         <DialogHeader className="px-6 py-4 border-b">
-          <div className="flex items-center justify-between">
-            <div>
-              <DialogTitle>Invoice Preview</DialogTitle>
-              <DialogDescription>
-                Review your invoice before downloading or sharing
-              </DialogDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onOpenChange(false)}
-              className="h-8 w-8"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+          <DialogTitle>Invoice Preview</DialogTitle>
+          <DialogDescription>
+            Review your invoice before downloading or sharing
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-auto p-6 bg-slate-50">

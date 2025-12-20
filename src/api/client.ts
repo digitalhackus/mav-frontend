@@ -171,6 +171,10 @@ const apiRequest = async <T>(
       
       const error = new Error(errorData.error || errorData.message || `HTTP error! status: ${response.status}`);
       (error as any).status = response.status;
+      // Preserve errors object for validation errors
+      if (errorData.errors) {
+        (error as any).errors = errorData.errors;
+      }
       throw error;
     }
 
@@ -222,12 +226,12 @@ export const authAPI = {
     return data;
   },
 
-  signup: async (name: string, email: string, password: string, role?: string) => {
+  signup: async (name: string, email: string, password: string, phone?: string, role?: string) => {
     const data = await apiRequest<{ success: boolean; user?: any; error?: string; message?: string }>(
       '/api/auth/signup',
       {
         method: 'POST',
-        body: JSON.stringify({ name, email, password, role }),
+        body: JSON.stringify({ name, email, password, phone, role }),
       }
     );
     return data;
@@ -253,12 +257,12 @@ export const authAPI = {
     );
   },
 
-  forgotPassword: async (email: string) => {
-    return apiRequest<{ success: boolean; message?: string; error?: string; userId?: string }>(
+  forgotPassword: async (identifier: string, method: 'email' | 'phone' = 'email') => {
+    return apiRequest<{ success: boolean; message?: string; error?: string; userId?: string; accountEmail?: string }>(
       '/api/auth/forgot-password',
       {
         method: 'POST',
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ [method]: identifier }),
       }
     );
   },
@@ -294,6 +298,49 @@ export const authAPI = {
       roleCounts: Record<string, number>;
       error?: string 
     }>('/api/auth/users');
+  },
+
+  updateUserRole: async (userId: string, role: string) => {
+    return apiRequest<{ 
+      success: boolean; 
+      message: string;
+      data: any;
+      error?: string 
+    }>(`/api/auth/users/${userId}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role }),
+    });
+  },
+};
+
+// Role Permissions API
+export const rolePermissionsAPI = {
+  getAll: async () => {
+    return apiRequest<{ 
+      success: boolean; 
+      data: Record<string, any>;
+      error?: string 
+    }>('/api/role-permissions');
+  },
+
+  getByRole: async (role: string) => {
+    return apiRequest<{ 
+      success: boolean; 
+      data: any;
+      error?: string 
+    }>(`/api/role-permissions/${role}`);
+  },
+
+  update: async (role: string, permissions: any) => {
+    return apiRequest<{ 
+      success: boolean; 
+      message: string;
+      data: any;
+      error?: string 
+    }>(`/api/role-permissions/${role}`, {
+      method: 'PUT',
+      body: JSON.stringify({ permissions }),
+    });
   },
 };
 
@@ -960,7 +1007,7 @@ export const settingsAPI = {
     security?: any;
     advanced?: any;
   }) => {
-    return apiRequest<{ success: boolean; message: string; data: any }>(
+    return apiRequest<{ success: boolean; message: string; data: any; errors?: any }>(
       '/api/settings',
       {
         method: 'PUT',

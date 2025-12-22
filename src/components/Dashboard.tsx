@@ -15,7 +15,6 @@ import {
   NotebookPen,
   Loader2
 } from "lucide-react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Badge } from "./ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -183,21 +182,6 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
     };
   }, [dateRange]); // Refetch when date range changes
 
-  // Use weekly data with PST dates, fallback to empty if not loaded yet
-  const salesData = weeklyData.length > 0 
-    ? weeklyData.map(item => ({
-        day: item.day, // Full label like "Mon Dec 2"
-        dayShort: item.dayShort, // Short label like "Mon"
-        revenue: item.revenue,
-        jobs: item.jobs
-      }))
-    : getCurrentWeekDates().map(weekDay => ({
-        day: weekDay.dayLabel,
-        dayShort: weekDay.dayName,
-        revenue: 0,
-        jobs: 0
-      }));
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -328,7 +312,10 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
         >
-          <Card className="border-l-4 border-[#c53032] h-full">
+          <Card 
+            className="border-l-4 border-[#c53032] h-full cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => onNavigate && onNavigate("reports?period=week")}
+          >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm text-gray-600">Weekly Revenue</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
@@ -353,7 +340,10 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-          <Card className="border-l-4 border-l-[#d94848] h-full">
+          <Card 
+            className="border-l-4 border-l-[#d94848] h-full cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => onNavigate && onNavigate("job-cards")}
+          >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm text-gray-600">Jobs in Progress</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
@@ -375,7 +365,10 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
         >
-          <Card className="border-l-4 border-l-[#e15b5b] h-full">
+          <Card 
+            className="border-l-4 border-l-[#e15b5b] h-full cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => onNavigate && onNavigate("job-cards")}
+          >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm text-gray-600">Completed Today</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
@@ -397,7 +390,10 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
         >
-          <Card className="border-l-4 border-l-[#f87171] h-full">
+          <Card 
+            className="border-l-4 border-l-[#f87171] h-full cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => onNavigate && onNavigate("customers")}
+          >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm text-gray-600">Active Customers</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
@@ -413,85 +409,6 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
             </CardContent>
           </Card>
         </motion.div>
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader className="space-y-1">
-            <CardTitle>Revenue Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent className="h-64 sm:h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={salesData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis 
-                  dataKey="dayShort" 
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                  interval={0}
-                />
-                <YAxis />
-                <Tooltip 
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload;
-                      return (
-                        <div className="bg-white p-3 border rounded shadow-lg">
-                          <p className="font-semibold">{data.day}</p>
-                          <p className="text-[#c53032]">
-                            Revenue: Rs {data.revenue.toLocaleString()}
-                          </p>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Line type="monotone" dataKey="revenue" stroke="#c53032" strokeWidth={3} dot={{ fill: "#c53032", r: 5 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="space-y-1">
-            <CardTitle>Jobs Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent className="h-64 sm:h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={salesData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis 
-                  dataKey="dayShort" 
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                  interval={0}
-                />
-                <YAxis />
-                <Tooltip 
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload;
-                      return (
-                        <div className="bg-white p-3 border rounded shadow-lg">
-                          <p className="font-semibold">{data.day}</p>
-                          <p className="text-[#c53032]">
-                            Jobs: {data.jobs}
-                          </p>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Bar dataKey="jobs" fill="#c53032" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Recent Jobs */}

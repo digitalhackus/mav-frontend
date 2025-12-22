@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Checkbox } from "./ui/checkbox";
@@ -12,6 +12,7 @@ type View = 'login' | 'signup' | 'verification' | 'forgot-password' | 'reset-pas
 export function Login() {
   const { login: authLogin } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [view, setView] = useState<View>('login');
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,9 +32,55 @@ export function Login() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [forgotPasswordMethod, setForgotPasswordMethod] = useState<'email' | 'phone'>('email');
+  const [invitationToken, setInvitationToken] = useState<string | null>(null);
+  const [invitationRole, setInvitationRole] = useState<string>("");
+  const [verifyingInvitation, setVerifyingInvitation] = useState(false);
+
+  // Check for invitation token in URL and verify it
+  useEffect(() => {
+    const token = searchParams.get('invitation');
+    console.log('Invitation token from URL:', token);
+    
+    if (token) {
+      setInvitationToken(token);
+      setView('signup'); // Show signup form immediately when token is present
+      setVerifyingInvitation(true);
+      setError(""); // Clear any previous errors
+      
+      // Verify invitation token
+      authAPI.verifyInvitation(token)
+        .then((response) => {
+          console.log('Invitation verification response:', response);
+          if (response.success && response.data) {
+            setEmail(response.data.email);
+            setInvitationRole(response.data.role);
+            setError(""); // Clear any errors on success
+          } else {
+            setError(response.error || "Invalid or expired invitation");
+          }
+        })
+        .catch((err: any) => {
+          console.error('Invitation verification error:', err);
+          setError(err.message || "Invalid or expired invitation");
+        })
+        .finally(() => {
+          setVerifyingInvitation(false);
+        });
+    } else {
+      // No invitation token, reset invitation-related state
+      if (invitationToken) {
+        // Only reset if we previously had a token (avoid resetting on initial mount)
+        setInvitationToken(null);
+        setInvitationRole("");
+        setView('login');
+      }
+    }
+  }, [searchParams]);
 
   // Load remembered credentials on mount
   useEffect(() => {
+    // Only load remembered credentials if there's no invitation token
+    if (!invitationToken) {
     const rememberedEmail = localStorage.getItem('mw_remembered_email');
     const rememberedPassword = localStorage.getItem('mw_remembered_password');
     if (rememberedEmail && rememberedPassword) {
@@ -41,7 +88,8 @@ export function Login() {
       setPassword(rememberedPassword);
       setRememberMe(true);
     }
-  }, []);
+    }
+  }, [invitationToken]);
 
   const validateEmail = (email: string): boolean => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -148,12 +196,18 @@ export function Login() {
     }
 
     try {
-      const response = await authAPI.signup(name, email, password, phone);
+      // Include invitation token if available
+      const response = await authAPI.signup(name, email, password, phone, undefined, invitationToken || undefined);
       if (response.success && response.user) {
         // Store userId and switch to verification view
         setUserId(response.user.id);
         setView('verification');
         setError("");
+        // Clear invitation token from URL
+        if (invitationToken) {
+          navigate('/login', { replace: true });
+          setInvitationToken(null);
+        }
         // Show success message
         const message = response.user.role === 'admin'
           ? "Admin account created! Please check your email for the verification OTP."
@@ -749,24 +803,6 @@ export function Login() {
               >
                 {loading ? "Please wait..." : "LOGIN"}
               </Button>
-
-              <div className="text-center pt-2">
-                <p className="text-sm text-gray-600">
-                  Don't have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setView('signup');
-                      setError("");
-                      setEmailError("");
-                      setPasswordError("");
-                    }}
-                    className="text-sm text-[#c53032] hover:text-[#a6212a] hover:underline font-medium"
-                  >
-                    Create Account
-                  </button>
-                </p>
-              </div>
             </form>
           )}
 
@@ -775,10 +811,29 @@ export function Login() {
             <form onSubmit={handleSignup} noValidate className="space-y-5">
               <div className="text-center mb-6">
                 <h2 className="text-2xl font-semibold text-gray-800 mb-2">Create Account</h2>
+                {invitationToken ? (
+                  <div>
+                    <p className="text-sm text-gray-600">
+                      You've been invited to join Momentum POS as a <strong>{invitationRole}</strong>
+                    </p>
+                    {invitationRole && (
+                      <div className="mt-2 inline-block px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                        Role: {invitationRole}
+                      </div>
+                    )}
+                  </div>
+                ) : (
                 <p className="text-sm text-gray-600">
                   Sign up to get started with Momentum POS
                 </p>
+                )}
               </div>
+
+              {verifyingInvitation && (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded text-blue-600 text-sm text-center">
+                  Verifying invitation...
+                </div>
+              )}
 
               {error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded text-red-600 text-sm">
@@ -806,9 +861,13 @@ export function Login() {
                     setEmail(e.target.value);
                     setEmailError("");
                   }}
+                  disabled={!!invitationToken}
                 />
                 {emailError && (
                   <p className="mt-1 text-sm text-red-600">{emailError}</p>
+                )}
+                {invitationToken && (
+                  <p className="mt-1 text-xs text-gray-500">Email is set from your invitation</p>
                 )}
               </div>
 
@@ -853,7 +912,7 @@ export function Login() {
               <Button
                 type="submit"
                 className="w-full h-12 bg-[#c53032] hover:bg-[#a6212a] text-white"
-                disabled={loading}
+                disabled={loading || verifyingInvitation}
               >
                 {loading ? "Creating Account..." : "SIGN UP"}
               </Button>
@@ -868,6 +927,10 @@ export function Login() {
                       setError("");
                       setEmailError("");
                       setPasswordError("");
+                      if (invitationToken) {
+                        navigate('/login', { replace: true });
+                        setInvitationToken(null);
+                      }
                     }}
                     className="text-sm text-[#c53032] hover:text-[#a6212a] hover:underline font-medium"
                   >

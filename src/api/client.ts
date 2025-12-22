@@ -48,24 +48,19 @@ export const removeToken = (): void => {
   localStorage.removeItem('mw_refreshToken');
 };
 
-// Check if token is expired or invalid
-const isTokenExpired = (token: string | null): boolean => {
-  if (!token) return true;
+// Check if token format is valid (don't check expiration - let backend handle it)
+const isTokenValid = (token: string | null): boolean => {
+  if (!token) return false;
   try {
     // JWT tokens have 3 parts separated by dots
     const parts = token.split('.');
-    if (parts.length !== 3) return true;
+    if (parts.length !== 3) return false;
     
-    // Decode the payload (second part)
-    const payload = JSON.parse(atob(parts[1]));
-    const exp = payload.exp;
-    
-    if (!exp) return false; // If no expiration, assume valid
-    
-    // Check if token is expired (with 5 second buffer)
-    return Date.now() >= (exp * 1000) - 5000;
+    // Just verify it's a valid JWT format, don't check expiration
+    // Backend will handle expiration validation
+    return true;
   } catch {
-    return true; // If we can't parse, assume invalid
+    return false; // If we can't parse, assume invalid format
   }
 };
 
@@ -83,7 +78,8 @@ const apiRequest = async <T>(
                       url.includes('/api/auth/forgot-password') ||
                       url.includes('/api/auth/reset-password') ||
                       url.includes('/api/auth/verify-email') ||
-                      url.includes('/api/auth/send-verification-otp');
+                      url.includes('/api/auth/send-verification-otp') ||
+                      url.includes('/api/auth/invitation/');
 
   // Log the full URL being called (for debugging)
   console.log('📡 API Request:', options.method || 'GET', url);
@@ -103,14 +99,14 @@ const apiRequest = async <T>(
     if (isAuthMeEndpoint) {
       headers['Authorization'] = `Bearer ${token}`;
     } else if (!isAuthCheck) {
-      // For non-auth endpoints, validate token before sending
-      if (isTokenExpired(token)) {
-        // Token is expired, remove it and throw error
+      // For non-auth endpoints, validate token format only
+      // Don't check expiration - let backend handle it (session won't expire until browser close or logout)
+      if (!isTokenValid(token)) {
+        // Token format is invalid, remove it and throw error
         removeToken();
-        const error = new Error('Session expired, please log in again');
+        const error = new Error('Invalid session token, please log in again');
         (error as any).status = 401;
         (error as any).isAuthError = true;
-        (error as any).isTokenExpired = true;
         throw error;
       }
       headers['Authorization'] = `Bearer ${token}`;
@@ -226,12 +222,12 @@ export const authAPI = {
     return data;
   },
 
-  signup: async (name: string, email: string, password: string, phone?: string, role?: string) => {
+  signup: async (name: string, email: string, password: string, phone?: string, role?: string, invitationToken?: string) => {
     const data = await apiRequest<{ success: boolean; user?: any; error?: string; message?: string }>(
       '/api/auth/signup',
       {
         method: 'POST',
-        body: JSON.stringify({ name, email, password, phone, role }),
+        body: JSON.stringify({ name, email, password, phone, role, invitationToken }),
       }
     );
     return data;
@@ -310,6 +306,34 @@ export const authAPI = {
       method: 'PUT',
       body: JSON.stringify({ role }),
     });
+  },
+
+  inviteUser: async (email: string, role: string) => {
+    return apiRequest<{ 
+      success: boolean; 
+      message: string;
+      data: {
+        email: string;
+        role: string;
+        expiresAt: string;
+        invitationLink: string;
+      };
+      error?: string 
+    }>('/api/auth/invite', {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    });
+  },
+
+  verifyInvitation: async (token: string) => {
+    return apiRequest<{ 
+      success: boolean; 
+      data: {
+        email: string;
+        role: string;
+      };
+      error?: string 
+    }>(`/api/auth/invitation/${token}`);
   },
 };
 

@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { AddInvoice } from "./AddInvoice";
 import { InvoiceDetail } from "./InvoiceDetail";
 import {
@@ -21,7 +22,8 @@ import {
   Eye,
   Loader2,
   Trash2,
-  MoreVertical
+  MoreVertical,
+  Edit
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -61,42 +63,33 @@ const getDisplayStatus = (invoice: any): "Draft" | "Unpaid" | "Paid" => {
     return "Paid";
   }
   
-  // If status is "Pending", determine if it's Draft or Unpaid
-  if (backendStatus === "Pending") {
-    // Check if invoice was created today (within last 24 hours) - consider it Draft
-    const invoiceDate = new Date(invoice.date || invoice.createdAt || Date.now());
-    const now = new Date();
-    const hoursDiff = (now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60);
-    
-    // If created within last 24 hours and no payment method, consider it Draft
-    if (hoursDiff < 24 && !invoice.paymentMethod) {
-      return "Draft";
-    }
-    
-    // Otherwise, it's Unpaid
-    return "Unpaid";
+  // If status is "Pending" and payment method is null/undefined, it's a Draft
+  // If paymentMethod is empty string '', it's Unpaid (completed but not paid)
+  if (backendStatus === "Pending" && (invoice.paymentMethod === null || invoice.paymentMethod === undefined)) {
+    return "Draft";
   }
   
-  // For cancelled or other statuses, default to Unpaid
+  // Otherwise it's Unpaid
   return "Unpaid";
 };
 
 // Helper function to get backend status from display status for filtering
 const getBackendStatusFromDisplay = (displayStatus: string): string | undefined => {
   if (displayStatus === "Paid") return "Paid";
-  if (displayStatus === "Unpaid" || displayStatus === "Draft") return "Pending";
+  if (displayStatus === "Unpaid") return "Pending";
   return undefined;
 };
 
 export function Invoices() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [customerFilter, setCustomerFilter] = useState<string>("");
-  const [isAddInvoiceOpen, setIsAddInvoiceOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [invoiceToDelete, setInvoiceToDelete] = useState<any | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -115,9 +108,9 @@ export function Invoices() {
       if (response.success) {
         let filteredInvoices = response.data;
         
-        // If filtering by Draft or Unpaid, we need to filter client-side
-        // since both map to "Pending" in backend
-        if (statusFilter === "Draft" || statusFilter === "Unpaid") {
+        // If filtering by Unpaid, we need to filter client-side
+        // since it maps to "Pending" in backend
+        if (statusFilter === "Unpaid") {
           filteredInvoices = filteredInvoices.filter((invoice: any) => {
             const displayStatus = getDisplayStatus(invoice);
             return displayStatus === statusFilter;
@@ -147,6 +140,33 @@ export function Invoices() {
       unsubscribe();
     };
   }, [searchQuery, statusFilter, customerFilter]);
+
+  // Check for saved draft and auto-open create tab (only once on mount)
+  useEffect(() => {
+    const checkDraft = () => {
+      try {
+        const draftData = localStorage.getItem('invoice_draft');
+        if (draftData) {
+          const draft = JSON.parse(draftData);
+          const draftAge = Date.now() - (draft.timestamp || 0);
+          const sevenDays = 7 * 24 * 60 * 60 * 1000;
+          if (draftAge < sevenDays && (draft.selectedCustomerId || (draft.items && draft.items.length > 0))) {
+            // Switch to create tab to load draft automatically
+            setActiveTab("create");
+          } else {
+            // Draft is too old, remove it
+            localStorage.removeItem('invoice_draft');
+          }
+        }
+      } catch (error) {
+        console.error('Error checking draft:', error);
+        localStorage.removeItem('invoice_draft');
+      }
+    };
+
+    checkDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Check for customer filter in URL params
   useEffect(() => {
@@ -185,12 +205,20 @@ export function Invoices() {
   };
 
   const handleCreateInvoice = () => {
-    setIsAddInvoiceOpen(true);
+    setActiveTab("create");
   };
 
-  const handleCloseCreateInvoice = () => {
-    setIsAddInvoiceOpen(false);
+  const handleEditInvoice = (invoice: any) => {
+    // Store invoice ID in sessionStorage to be picked up by AddInvoice component
+    sessionStorage.setItem('editingInvoiceId', invoice._id || invoice.id);
+    setActiveTab("create");
+  };
+
+  const handleInvoiceCreated = () => {
     fetchInvoices();
+    setActiveTab("all");
+    // Clear editing invoice ID after creation/update
+    sessionStorage.removeItem('editingInvoiceId');
   };
 
   const handleDeleteClick = (e: React.MouseEvent, invoice: any) => {
@@ -221,19 +249,6 @@ export function Invoices() {
     setInvoiceToDelete(null);
   };
 
-  // If creating a new invoice, show the AddInvoice view
-  if (isAddInvoiceOpen) {
-    return (
-      <AddInvoice
-        onClose={handleCloseCreateInvoice}
-        onSubmit={async (data) => {
-          // Invoice is already created by AddInvoice component
-          // Just refresh the list and close
-          handleCloseCreateInvoice();
-        }}
-      />
-    );
-  }
 
   // Transform invoice data to match InvoiceDetail format
   const transformInvoiceForDetail = (invoice: any) => {
@@ -313,15 +328,17 @@ export function Invoices() {
           <h1 className="text-2xl lg:text-3xl mb-1 lg:mb-2">Invoices</h1>
           <p className="text-sm lg:text-base text-gray-600">Manage and track all invoices</p>
         </div>
-        <Button 
-          className="bg-[#c53032] hover:bg-[#a6212a] w-full lg:w-auto" 
-          size="sm"
-          onClick={handleCreateInvoice}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Create Invoice
-        </Button>
       </div>
+
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="all">All Invoices</TabsTrigger>
+          <TabsTrigger value="create">Create Invoice</TabsTrigger>
+        </TabsList>
+
+        {/* All Invoices Tab */}
+        <TabsContent value="all" className="space-y-4 lg:space-y-6 mt-4">
 
       {/* Stats Overview */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -603,7 +620,8 @@ export function Invoices() {
                       className={
                         getDisplayStatus(invoice) === "Paid" ? "bg-green-100 text-green-700 border-green-200" :
                         getDisplayStatus(invoice) === "Draft" ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
-                        "bg-orange-100 text-orange-700 border-orange-200"
+                        getDisplayStatus(invoice) === "Unpaid" ? "bg-orange-100 text-orange-700 border-orange-200" :
+                        "bg-slate-100 text-slate-700 border-slate-200"
                       }
                     >
                       {getDisplayStatus(invoice) === "Paid" && <CheckCircle2 className="h-3 w-3 mr-1" />}
@@ -640,6 +658,20 @@ export function Invoices() {
                             <Eye className="h-4 w-4 mr-2" />
                             View Details
                           </DropdownMenuItem>
+                          {(getDisplayStatus(invoice) === "Draft" || getDisplayStatus(invoice) === "Unpaid") && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEditInvoice(invoice);
+                                }}
+                              >
+                                <Edit className="h-4 w-4 mr-2" />
+                                Edit Invoice
+                              </DropdownMenuItem>
+                            </>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem 
                             onClick={(e) => handleDeleteClick(e, invoice)}
@@ -662,30 +694,47 @@ export function Invoices() {
         </CardContent>
       </Card>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Invoice</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete invoice{" "}
-              <span className="font-semibold">
-                {formatInvoiceId(invoiceToDelete)}
-              </span>
-              ? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleDeleteCancel}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteConfirm}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+          {/* Delete Confirmation Dialog */}
+          <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete Invoice</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to delete invoice{" "}
+                  <span className="font-semibold">
+                    {formatInvoiceId(invoiceToDelete)}
+                  </span>
+                  ? This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel onClick={handleDeleteCancel}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleDeleteConfirm}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </TabsContent>
+
+        {/* Create Invoice Tab */}
+        <TabsContent value="create" className="mt-4">
+          <AddInvoice
+            onClose={() => {
+              setActiveTab("all");
+              sessionStorage.removeItem('editingInvoiceId');
+            }}
+            onSubmit={async (data) => {
+              // Invoice is already created/updated by AddInvoice component
+              // Just refresh the list and switch to all tab
+              handleInvoiceCreated();
+            }}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

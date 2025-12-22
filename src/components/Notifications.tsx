@@ -754,35 +754,6 @@ export function Notifications() {
         </CardContent>
       </Card>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
-        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
-          <CardContent className="pt-6">
-            <Mail className="h-6 lg:h-8 w-6 lg:w-8 text-blue-600 mb-3" />
-            <h3 className="font-medium mb-2 text-sm lg:text-base">Email Templates</h3>
-            <p className="text-xs lg:text-sm text-gray-600 mb-4">Customize email reminder templates</p>
-            <Button variant="outline" size="sm">Manage Templates</Button>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-          <CardContent className="pt-6">
-            <MessageSquare className="h-6 lg:h-8 w-6 lg:w-8 text-green-600 mb-3" />
-            <h3 className="font-medium mb-2 text-sm lg:text-base">WhatsApp Integration</h3>
-            <p className="text-xs lg:text-sm text-gray-600 mb-4">Send reminders via WhatsApp</p>
-            <Button variant="outline" size="sm">Configure</Button>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
-          <CardContent className="pt-6">
-            <Calendar className="h-6 lg:h-8 w-6 lg:w-8 text-purple-600 mb-3" />
-            <h3 className="font-medium mb-2 text-sm lg:text-base">Auto Reminders</h3>
-            <p className="text-xs lg:text-sm text-gray-600 mb-4">Set up automatic reminder schedules</p>
-            <Button variant="outline" size="sm">Setup Rules</Button>
-          </CardContent>
-        </Card>
-      </div>
     </div>
   );
 }

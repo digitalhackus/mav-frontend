@@ -86,7 +86,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
 
   // Security settings
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
-  const [sessionTimeout, setSessionTimeout] = useState(true);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -248,7 +247,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
         // Load security settings
         if (data.security) {
           setTwoFactorEnabled(data.security.twoFactorEnabled || false);
-          setSessionTimeout(data.security.sessionTimeout ?? true);
         }
 
         // Load advanced settings
@@ -400,7 +398,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
       await settingsAPI.update({
         security: {
           twoFactorEnabled,
-          sessionTimeout,
         },
       });
       toast.success("Security settings saved successfully");
@@ -472,7 +469,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           )}
           <TabsTrigger value="users" className="text-xs lg:text-sm">Users</TabsTrigger>
           <TabsTrigger value="notifications" className="text-xs lg:text-sm">Notifications</TabsTrigger>
-          <TabsTrigger value="email" className="text-xs lg:text-sm lg:col-span-1 col-start-1">Email</TabsTrigger>
           <TabsTrigger value="security" className="text-xs lg:text-sm">Security</TabsTrigger>
         </TabsList>
 
@@ -897,219 +893,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           </Card>
         </TabsContent>
 
-        {/* Email Settings */}
-        <TabsContent value="email">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <Mail className="h-5 w-5 text-blue-600" />
-                </div>
-                <div>
-                  <CardTitle>Email Templates</CardTitle>
-                  <p className="text-sm text-gray-600 mt-1">Customize email templates for automated messages</p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6 pb-24">
-              {/* Info Banner */}
-              <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                  <p className="text-sm text-blue-700">
-                    Requires SMTP or Google/Outlook connection.
-                  </p>
-                </div>
-              </div>
-
-              {/* Email Template Fields */}
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email-from">From Email</Label>
-                  <Input 
-                    id="email-from" 
-                    type="email" 
-                    value={fromEmail}
-                    onChange={(e) => setFromEmail(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="email-signature">Email Signature</Label>
-                  <Textarea 
-                    id="email-signature" 
-                    rows={4}
-                    value={emailSignature}
-                    onChange={(e) => setEmailSignature(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-3">
-                  <Label>Invoice Email Template</Label>
-                  <div className="p-4 border rounded-lg bg-gray-50">
-                    <p className="text-sm mb-2">Subject: {invoiceSubject || 'Your Invoice #{invoice_number}'}</p>
-                    <p className="text-sm text-gray-600 whitespace-pre-line">
-                      {invoiceTemplate || 'Dear {customer_name},\n\nThank you for choosing Momentum AutoWorks. Please find your invoice attached.'}
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="invoice-subject">Invoice Subject</Label>
-                    <Input 
-                      id="invoice-subject"
-                      value={invoiceSubject}
-                      onChange={(e) => setInvoiceSubject(e.target.value)}
-                      placeholder="Your Invoice #{invoice_number}"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="invoice-template">Invoice Template</Label>
-                    <Textarea 
-                      id="invoice-template"
-                      value={invoiceTemplate}
-                      onChange={(e) => setInvoiceTemplate(e.target.value)}
-                      rows={4}
-                      placeholder="Dear {customer_name},&#10;&#10;Thank you for choosing Momentum AutoWorks. Please find your invoice attached."
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Connect Email Section */}
-              <div className="space-y-3">
-                <Label>Connect Email</Label>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* SMTP Card */}
-                  <Card className={`border-2 ${smtpConfigured ? 'border-green-300 bg-green-50' : 'hover:border-blue-300'} transition-colors`}>
-                    <CardContent className="p-4 flex flex-col items-center text-center space-y-3">
-                      <div className="p-3 bg-gray-100 rounded-lg">
-                        <Server className="h-6 w-6 text-gray-700" />
-                      </div>
-                      <div>
-                        <p className="font-medium">SMTP</p>
-                        <p className="text-xs text-gray-600 mt-1">Custom SMTP server</p>
-                      </div>
-                      {smtpConfigured ? (
-                        <div className="flex items-center gap-1 text-green-600 text-sm">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>Connected</span>
-                        </div>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="w-full"
-                          onClick={() => handleConnectEmail('smtp')}
-                          disabled={saving === 'email-smtp'}
-                        >
-                          {saving === 'email-smtp' ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            'Connect'
-                          )}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Google Card */}
-                  <Card className={`border-2 ${googleConfigured ? 'border-green-300 bg-green-50' : 'hover:border-blue-300'} transition-colors`}>
-                    <CardContent className="p-4 flex flex-col items-center text-center space-y-3">
-                      <div className="p-3 bg-red-100 rounded-lg">
-                        <Chrome className="h-6 w-6 text-red-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Google</p>
-                        <p className="text-xs text-gray-600 mt-1">Gmail integration</p>
-                      </div>
-                      {googleConfigured ? (
-                        <div className="flex items-center gap-1 text-green-600 text-sm">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>Connected</span>
-                        </div>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="w-full"
-                          onClick={() => handleConnectEmail('google')}
-                          disabled={saving === 'email-google'}
-                        >
-                          {saving === 'email-google' ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            'Connect'
-                          )}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Outlook Card */}
-                  <Card className={`border-2 ${outlookConfigured ? 'border-green-300 bg-green-50' : 'hover:border-blue-300'} transition-colors`}>
-                    <CardContent className="p-4 flex flex-col items-center text-center space-y-3">
-                      <div className="p-3 bg-blue-100 rounded-lg">
-                        <Mail className="h-6 w-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Outlook</p>
-                        <p className="text-xs text-gray-600 mt-1">Microsoft 365</p>
-                      </div>
-                      {outlookConfigured ? (
-                        <div className="flex items-center gap-1 text-green-600 text-sm">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>Connected</span>
-                        </div>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="w-full"
-                          onClick={() => handleConnectEmail('outlook')}
-                          disabled={saving === 'email-outlook'}
-                        >
-                          {saving === 'email-outlook' ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            'Connect'
-                          )}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-
-              {/* Sticky Footer */}
-              <div className="sticky bottom-0 left-0 right-0 bg-white border-t pt-4 mt-6 flex justify-center gap-3">
-                <Button 
-                  className="text-white"
-                  style={{ backgroundColor: themeColor }}
-                  onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => {
-                    const hoverColor = getHoverColor(themeColor);
-                    e.currentTarget.style.backgroundColor = hoverColor;
-                  }}
-                  onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => {
-                    e.currentTarget.style.backgroundColor = themeColor;
-                  }}
-                  onClick={handleSaveEmail}
-                  disabled={saving === "email"}
-                >
-                  {saving === "email" ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4 mr-2" />
-                      Save Email Settings
-                    </>
-                  )}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
 
         {/* Security Settings */}
         <TabsContent value="security">
@@ -1134,17 +917,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                 <Switch 
                   checked={twoFactorEnabled}
                   onCheckedChange={setTwoFactorEnabled}
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">Session Timeout</p>
-                  <p className="text-sm text-gray-600">Auto logout after 30 minutes of inactivity</p>
-                </div>
-                <Switch 
-                  checked={sessionTimeout}
-                  onCheckedChange={setSessionTimeout}
                 />
               </div>
 

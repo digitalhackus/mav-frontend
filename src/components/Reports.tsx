@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -42,6 +43,7 @@ import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
 
 export function Reports() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [financialOverview, setFinancialOverview] = useState<any>(null);
@@ -49,11 +51,22 @@ export function Reports() {
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
   const [popularServices, setPopularServices] = useState<any[]>([]);
   const [dailyPerformance, setDailyPerformance] = useState<any[]>([]);
-  const [period, setPeriod] = useState("month");
+  
+  // Get period from URL params or default to "month"
+  const urlPeriod = searchParams.get('period');
+  const [period, setPeriod] = useState(urlPeriod || "month");
   const [isExporting, setIsExporting] = useState(false);
   const [isCustomDialogOpen, setIsCustomDialogOpen] = useState(false);
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
+
+  // Update period when URL param changes
+  useEffect(() => {
+    const urlPeriodValue = searchParams.get('period');
+    if (urlPeriodValue && urlPeriodValue !== period) {
+      setPeriod(urlPeriodValue);
+    }
+  }, [searchParams, period]);
 
   useEffect(() => {
     fetchAllReports();
@@ -496,22 +509,6 @@ export function Reports() {
         <div>
           <h1 className="text-2xl lg:text-3xl mb-1 lg:mb-2">Reports & Analytics</h1>
           <p className="text-sm lg:text-base text-gray-600">Analyze workshop performance and financial insights</p>
-        </div>
-        <div className="flex gap-2 lg:gap-3">
-          <select
-            value={period}
-            onChange={(e) => setPeriod(e.target.value)}
-            className="px-3 py-2 border rounded-md text-sm"
-          >
-            <option value="today">Today</option>
-            <option value="week">This Week</option>
-            <option value="month">This Month</option>
-            <option value="year">This Year</option>
-          </select>
-          <Button className="bg-[#c53032] hover:bg-[#a6212a] flex-1 lg:flex-none" size="sm">
-            <Download className="h-4 w-4 lg:mr-2" />
-            <span className="hidden sm:inline">Export</span>
-          </Button>
         </div>
       </div>
 

@@ -301,6 +301,12 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
   };
 
   const handleDownloadPDF = async () => {
+    // Only allow download for paid invoices
+    if (invoice.status !== "Paid") {
+      alert("Only paid invoices can be downloaded.");
+      return;
+    }
+    
     try {
       const doc = new jsPDF("p", "mm", "a4");
       const margin = 20;
@@ -679,10 +685,12 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={handleDownloadClick}>
-            <Download className="h-4 w-4 mr-2" />
-            <span className="hidden sm:inline">Download PDF</span>
-          </Button>
+          {invoice.status === "Paid" && (
+            <Button variant="outline" size="sm" onClick={handleDownloadClick}>
+              <Download className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">Download PDF</span>
+            </Button>
+          )}
           
           {/* Invoice Preview Modal */}
           <Dialog open={showPreviewModal} onOpenChange={setShowPreviewModal}>
@@ -943,14 +951,16 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
             <Printer className="h-4 w-4 mr-2" />
                     Print
           </Button>
-                  <Button
-                    size="sm"
-                    onClick={handleDownloadPDF}
-                    className="bg-[#c53032] hover:bg-[#a6212a] text-white"
-                  >
-            <Download className="h-4 w-4 mr-2" />
-                    Download PDF
-          </Button>
+                  {invoice.status === "Paid" && (
+                    <Button
+                      size="sm"
+                      onClick={handleDownloadPDF}
+                      className="bg-[#c53032] hover:bg-[#a6212a] text-white"
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Download PDF
+                    </Button>
+                  )}
                 </div>
               </div>
             </DialogContent>

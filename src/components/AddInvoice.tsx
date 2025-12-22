@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
@@ -34,7 +34,8 @@ import {
   Smartphone,
   Package,
   Loader2,
-  ChevronsUpDown
+  ChevronsUpDown,
+  MessageSquare
 } from "lucide-react";
 import {
   Select,
@@ -105,11 +106,11 @@ const mockSupervisors = [
   { id: "SUP-002", name: "Imran Ahmed" },
 ];
 
-// Payment methods with different tax rates
-const paymentMethods = [
-  { id: "cash", label: "Cash", icon: Banknote, taxRate: 0 },
-  { id: "card", label: "Card/POS", icon: CreditCard, taxRate: 0.18 }, // 18% GST
-  { id: "online", label: "Online Transfer", icon: Smartphone, taxRate: 0.15 }, // 15% GST
+// Payment methods base structure (tax rates will be loaded from settings)
+const basePaymentMethods = [
+  { id: "cash", label: "Cash", icon: Banknote },
+  { id: "card", label: "Card/POS", icon: CreditCard },
+  { id: "online", label: "Online Transfer", icon: Smartphone },
 ];
 
 // Default terms and conditions
@@ -119,7 +120,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
-  const [invoiceStatus, setInvoiceStatus] = useState<"Draft" | "Unpaid" | "Paid">("Draft");
+  const [invoiceStatus, setInvoiceStatus] = useState<"Unpaid" | "Paid">("Unpaid");
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [businessProfile, setBusinessProfile] = useState({
     name: "MOMENTUM AUTOWORKS",
@@ -130,7 +131,16 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
   const [invoiceNumber] = useState(() => formatInvoiceId({ _id: Date.now().toString() }));
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [draftInvoiceId, setDraftInvoiceId] = useState<string | null>(null); // Track draft invoice ID in database
+  const [isLoadingInvoice, setIsLoadingInvoice] = useState(false);
   const isProcessingRef = useRef(false);
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const draftVehicleIdRef = useRef<string | null>(null);
+  const isRestoringDraftRef = useRef(false);
+  const prevVehicleIdRef = useRef<string | null>(null);
+  const prevCustomerIdRef = useRef<string | null>(null);
+  const restorationCompleteRef = useRef(false);
   
   // Get initial values from URL params if present
   const urlCustomerId = searchParams.get('customerId') || '';
@@ -164,6 +174,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   const [discountType, setDiscountType] = useState<"percent" | "fixed">("percent");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [notes, setNotes] = useState("");
+  const [paymentMethods, setPaymentMethods] = useState(basePaymentMethods.map(method => ({ ...method, taxRate: 0 })));
   
   // Step 4: Staff Info
   const [selectedTechnician, setSelectedTechnician] = useState("");
@@ -207,27 +218,516 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     }
   };
 
+  // Load draft from localStorage on mount
   useEffect(() => {
+    const loadDraft = () => {
+      try {
+        const draftData = localStorage.getItem(DRAFT_KEY);
+        if (draftData) {
+          const draft = JSON.parse(draftData);
+          // Only restore if draft is less than 7 days old
+          const draftAge = Date.now() - (draft.timestamp || 0);
+          const sevenDays = 7 * 24 * 60 * 60 * 1000;
+          if (draftAge < sevenDays) {
+            // Restore if we have customer, vehicle, or items
+            if (draft.selectedCustomerId || draft.selectedVehicleId || (draft.items && draft.items.length > 0)) {
+              // Restore draft invoice ID if it exists (prevents creating duplicates)
+              if (draft.draftInvoiceId) {
+                setDraftInvoiceId(draft.draftInvoiceId);
+                (window as any).__currentDraftInvoiceId = draft.draftInvoiceId;
+              }
+              
+              // Set restoration flag BEFORE setting customer ID
+              isRestoringDraftRef.current = true;
+              restorationCompleteRef.current = false;
+              if (draft.selectedCustomerId) {
+                // Store vehicle ID to restore after vehicles are loaded
+                if (draft.selectedVehicleId) {
+                  draftVehicleIdRef.current = draft.selectedVehicleId;
+                }
+                // Update prevCustomerIdRef to prevent items from being cleared during restoration
+                prevCustomerIdRef.current = draft.selectedCustomerId;
+                // Set customer ID - this will trigger vehicle fetching
+                setSelectedCustomerId(draft.selectedCustomerId);
+              } else if (draft.selectedVehicleId) {
+                // If no customer but vehicle exists, we can't properly restore vehicle without customer
+                // Skip vehicle restoration in this case
+                console.warn('Draft has vehicle but no customer - skipping vehicle restoration');
+              }
+              if (draft.items && draft.items.length > 0) setItems(draft.items);
+              if (draft.discount !== undefined) setDiscount(draft.discount);
+              if (draft.discountType) setDiscountType(draft.discountType);
+              if (draft.paymentMethod) setPaymentMethod(draft.paymentMethod);
+              if (draft.notes !== undefined) setNotes(draft.notes);
+              if (draft.invoiceStatus) setInvoiceStatus(draft.invoiceStatus);
+              if (draft.currentStep) setCurrentStep(draft.currentStep);
+              return true;
+            }
+          } else {
+            // Draft is too old, remove it
+            localStorage.removeItem(DRAFT_KEY);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading draft:', error);
+        localStorage.removeItem(DRAFT_KEY);
+      }
+      return false;
+    };
+
     fetchCustomers();
     fetchCatalogItems();
     fetchInventoryItems();
     fetchBusinessProfile();
+    
+    // Check for editing invoice ID from sessionStorage
+    const editingInvoiceId = sessionStorage.getItem('editingInvoiceId');
+    if (editingInvoiceId) {
+      setEditingInvoiceId(editingInvoiceId);
+      loadInvoiceForEditing(editingInvoiceId);
+    } else {
+      loadDraft();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Restore vehicle ID after vehicles are loaded (when restoring from draft or editing)
+  useEffect(() => {
+    // First check if we have editing vehicle data to match
+    if (isRestoringDraftRef.current && !loadingVehicles && vehicles.length > 0 && (window as any).__editingVehicleData) {
+      const editingVehicleData = (window as any).__editingVehicleData;
+      console.log('Attempting to match vehicle:', editingVehicleData, 'Available vehicles:', vehicles);
+      // Try to find vehicle by matching make, model, and plateNo
+      // Use more lenient matching - require make and model, plateNo is optional (if both are empty, match anyway)
+      const vehicleToRestore = vehicles.find(v => {
+        const makeMatch = (v.make || '').trim().toLowerCase() === (editingVehicleData.make || '').trim().toLowerCase();
+        const modelMatch = (v.model || '').trim().toLowerCase() === (editingVehicleData.model || '').trim().toLowerCase();
+        const vPlateNo = (v.plateNo || '').trim().toLowerCase();
+        const editingPlateNo = (editingVehicleData.plateNo || '').trim().toLowerCase();
+        // PlateNo must match if both are provided, but if both are empty, that's also a match
+        const plateMatch = (vPlateNo === '' && editingPlateNo === '') || vPlateNo === editingPlateNo;
+        return makeMatch && modelMatch && plateMatch;
+      });
+      
+      if (vehicleToRestore) {
+        console.log('Vehicle matched:', vehicleToRestore);
+        // Vehicle found - restore it using the actual vehicle's ID
+        const vehicleId = vehicleToRestore._id || vehicleToRestore.id;
+        const vehicleIdString = String(vehicleId);
+        setSelectedVehicleId(vehicleIdString);
+        draftVehicleIdRef.current = vehicleIdString; // Set this for consistency
+        // Update prevVehicleIdRef so items won't be cleared during restoration
+        prevVehicleIdRef.current = vehicleIdString;
+        
+        // Restore items if we're editing
+        if ((window as any).__editingInvoiceItems) {
+          setItems((window as any).__editingInvoiceItems);
+          delete (window as any).__editingInvoiceItems;
+        }
+        
+        // Clean up editing vehicle data
+        delete (window as any).__editingVehicleData;
+      } else {
+        // Vehicle not found by exact matching - try partial match (make + model only)
+        console.log('Exact match failed, trying partial match...');
+        const partialMatch = vehicles.find(v => {
+          const makeMatch = (v.make || '').trim().toLowerCase() === (editingVehicleData.make || '').trim().toLowerCase();
+          const modelMatch = (v.model || '').trim().toLowerCase() === (editingVehicleData.model || '').trim().toLowerCase();
+          return makeMatch && modelMatch;
+        });
+        
+        if (partialMatch) {
+          console.log('Partial match found:', partialMatch);
+          const vehicleId = partialMatch._id || partialMatch.id;
+          const vehicleIdString = String(vehicleId);
+          setSelectedVehicleId(vehicleIdString);
+          draftVehicleIdRef.current = vehicleIdString;
+          prevVehicleIdRef.current = vehicleIdString;
+          
+          // Restore items if we're editing
+          if ((window as any).__editingInvoiceItems) {
+            setItems((window as any).__editingInvoiceItems);
+            delete (window as any).__editingInvoiceItems;
+          }
+          
+          delete (window as any).__editingVehicleData;
+        } else {
+          console.log('No vehicle match found (exact or partial)');
+          // Vehicle not found by matching - still restore items
+          if ((window as any).__editingInvoiceItems) {
+            setItems((window as any).__editingInvoiceItems);
+            delete (window as any).__editingInvoiceItems;
+          }
+          delete (window as any).__editingVehicleData;
+        }
+      }
+      
+      // Mark restoration as complete
+      restorationCompleteRef.current = true;
+      draftVehicleIdRef.current = null;
+      isRestoringDraftRef.current = false;
+      setTimeout(() => {
+        restorationCompleteRef.current = false;
+      }, 1000);
+      return; // Early return to skip validation check during restoration
+    }
+    
+    // Handle draft restoration with vehicle ID
+    if (isRestoringDraftRef.current && draftVehicleIdRef.current && !loadingVehicles) {
+      if (vehicles.length > 0) {
+        // Check if the vehicle exists in the loaded vehicles (handle both string and object ID comparison)
+        const vehicleToRestore = vehicles.find(v => {
+          const vehicleId = v._id || v.id;
+          const draftVehicleId = draftVehicleIdRef.current;
+          // Compare as strings to handle MongoDB ObjectId vs string comparisons
+          return String(vehicleId) === String(draftVehicleId);
+        });
+        if (vehicleToRestore) {
+          // Vehicle exists - restore it using the actual vehicle's ID
+          const vehicleId = vehicleToRestore._id || vehicleToRestore.id;
+          const vehicleIdString = String(vehicleId);
+          setSelectedVehicleId(vehicleIdString);
+          // Update prevVehicleIdRef so items won't be cleared during restoration
+          prevVehicleIdRef.current = vehicleIdString;
+        }
+        // Mark restoration as complete AFTER setting vehicle (if found)
+        restorationCompleteRef.current = true;
+        // Clear the refs after attempting restoration
+        draftVehicleIdRef.current = null;
+        isRestoringDraftRef.current = false;
+        // Reset the restoration complete flag after a delay to allow state to update and prevent validation check from interfering
+        setTimeout(() => {
+          restorationCompleteRef.current = false;
+        }, 1000);
+      } else {
+        // Vehicles have finished loading but none were found - clear the refs
+        draftVehicleIdRef.current = null;
+        isRestoringDraftRef.current = false;
+        restorationCompleteRef.current = true;
+        setTimeout(() => {
+          restorationCompleteRef.current = false;
+        }, 1000);
+      }
+      return; // Early return to skip validation check during restoration
+    }
+    // Only validate vehicle ID if we're not restoring and restoration is complete
+    // Add extra check: don't validate if draftVehicleIdRef still has a value (restoration in progress)
+    if (!loadingVehicles && selectedVehicleId && vehicles.length > 0 && selectedCustomerId && 
+        !isRestoringDraftRef.current && !restorationCompleteRef.current && !draftVehicleIdRef.current) {
+      const vehicleExists = vehicles.some(v => {
+        const vehicleId = v._id || v.id;
+        return String(vehicleId) === String(selectedVehicleId);
+      });
+      if (!vehicleExists) {
+        // Vehicle ID doesn't match any loaded vehicle - clear it
+        // But only if this isn't a restoration scenario
+        setSelectedVehicleId("");
+      }
+    }
+  }, [vehicles, loadingVehicles, selectedVehicleId, selectedCustomerId]);
+
+  // Reset items when customer changes (but not during draft restoration)
+  useEffect(() => {
+    // Only reset items if we're not restoring from draft and customer actually changed
+    if (!isRestoringDraftRef.current && !restorationCompleteRef.current) {
+      if (prevCustomerIdRef.current !== null && prevCustomerIdRef.current !== selectedCustomerId) {
+        // Customer changed - reset items
+        setItems([]);
+      }
+      // Update the previous customer ID ref
+      if (selectedCustomerId) {
+        prevCustomerIdRef.current = selectedCustomerId;
+      } else {
+        // Customer was cleared - also clear items and reset ref
+        if (prevCustomerIdRef.current !== null) {
+          setItems([]);
+        }
+        prevCustomerIdRef.current = null;
+      }
+    }
+  }, [selectedCustomerId]);
+
+  // Reset items when vehicle changes (but not during draft restoration)
+  useEffect(() => {
+    // Only reset items if we're not restoring from draft and vehicle actually changed
+    if (!isRestoringDraftRef.current && !restorationCompleteRef.current) {
+      if (prevVehicleIdRef.current !== null && prevVehicleIdRef.current !== selectedVehicleId) {
+        // Vehicle changed - reset items
+        setItems([]);
+      }
+      // Update the previous vehicle ID ref
+      if (selectedVehicleId) {
+        prevVehicleIdRef.current = selectedVehicleId;
+      } else {
+        // Vehicle was cleared - also clear items and reset ref
+        if (prevVehicleIdRef.current !== null) {
+          setItems([]);
+        }
+        prevVehicleIdRef.current = null;
+      }
+    }
+    // Note: During restoration, prevVehicleIdRef is updated in the restoration useEffect
+  }, [selectedVehicleId]);
+
+  // Auto-save draft when data changes
+  useEffect(() => {
+    // Save draft to localStorage
+    const saveDraft = () => {
+      const draftData = {
+        selectedCustomerId,
+        selectedVehicleId,
+        items,
+        discount,
+        discountType,
+        paymentMethod,
+        notes,
+        invoiceStatus,
+        currentStep,
+        draftInvoiceId, // Include draft invoice ID from database
+        timestamp: Date.now()
+      };
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
+    };
+
+    // Save draft whenever we have a customer OR vehicle OR items (preserve all selections)
+    if (selectedCustomerId || selectedVehicleId || (items && items.length > 0)) {
+      saveDraft();
+    } else {
+      // If nothing is selected, clear the draft
+      localStorage.removeItem(DRAFT_KEY);
+    }
+  }, [selectedCustomerId, selectedVehicleId, items, discount, discountType, paymentMethod, notes, invoiceStatus, currentStep, draftInvoiceId]);
+
+  // Auto-save draft invoice to database (debounced) - function defined later
+  useEffect(() => {
+    // Clear any pending auto-save
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+
+    // Don't auto-save if editing an existing invoice
+    if (editingInvoiceId) {
+      return;
+    }
+
+    // Only auto-save if we have customer, vehicle, and at least one item
+    if (selectedCustomerId && selectedVehicleId && items && items.length > 0) {
+      // Debounce auto-save by 2 seconds
+      autoSaveTimeoutRef.current = setTimeout(() => {
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        autoSaveDraftInvoice();
+      }, 2000);
+    }
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, [selectedCustomerId, selectedVehicleId, items, editingInvoiceId]);
+
+  // Save draft before unmount or page unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Save draft to database if we have customer, vehicle, and items
+      if (!editingInvoiceId && selectedCustomerId && selectedVehicleId && items && items.length > 0) {
+        // Trigger immediate auto-save (don't wait for debounce)
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        autoSaveDraftInvoice();
+      }
+      
+      // Save draft to localStorage if we have customer, vehicle, or items
+      if (selectedCustomerId || selectedVehicleId || (items && items.length > 0)) {
+        const draftData = {
+          selectedCustomerId,
+          selectedVehicleId,
+          items,
+          discount,
+          discountType,
+          paymentMethod,
+          notes,
+          invoiceStatus,
+          currentStep,
+          draftInvoiceId,
+          timestamp: Date.now()
+        };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
+      } else {
+        // Clear draft if nothing is selected
+        localStorage.removeItem(DRAFT_KEY);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      
+      // Save draft to database when component unmounts (if not editing)
+      if (!editingInvoiceId && selectedCustomerId && selectedVehicleId && items && items.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        autoSaveDraftInvoice();
+      }
+      
+      // Also save to localStorage when component unmounts (navigating away)
+      if (selectedCustomerId || selectedVehicleId || (items && items.length > 0)) {
+        const draftData = {
+          selectedCustomerId,
+          selectedVehicleId,
+          items,
+          discount,
+          discountType,
+          paymentMethod,
+          notes,
+          invoiceStatus,
+          currentStep,
+          draftInvoiceId,
+          timestamp: Date.now()
+        };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
+      } else {
+        // Clear draft if nothing is selected
+        localStorage.removeItem(DRAFT_KEY);
+      }
+    };
+  }, [selectedCustomerId, selectedVehicleId, items, discount, discountType, paymentMethod, notes, invoiceStatus, currentStep, draftInvoiceId, editingInvoiceId]);
+
+  // Load invoice data for editing
+  const loadInvoiceForEditing = async (invoiceId: string) => {
+    try {
+      setIsLoadingInvoice(true);
+      const response = await invoicesAPI.getById(invoiceId);
+      
+      if (response.success && response.data) {
+        const invoice = response.data;
+        
+        // Set restoration flags to prevent items from being cleared
+        isRestoringDraftRef.current = true;
+        
+        // Set customer
+        const customerId = invoice.customer?._id || invoice.customer?.id || invoice.customer;
+        if (customerId) {
+          setSelectedCustomerId(customerId);
+          prevCustomerIdRef.current = customerId;
+          
+          // Set vehicle if exists - store vehicle data to match after vehicles are loaded
+          // Note: Invoice vehicles are stored as embedded objects (not references)
+          // So we need to match by make, model, and plateNo
+          if (invoice.vehicle) {
+            // Store vehicle matching data - will be matched after vehicles load
+            // Store as object with make, model, plateNo for matching
+            (window as any).__editingVehicleData = {
+              make: invoice.vehicle.make || '',
+              model: invoice.vehicle.model || '',
+              plateNo: invoice.vehicle.plateNo || '',
+              year: invoice.vehicle.year
+            };
+          }
+        }
+        
+        // Set invoice items - store them to restore after vehicle is loaded
+        if (invoice.items && invoice.items.length > 0) {
+          const formattedItems: InvoiceItem[] = invoice.items.map((item: any, index: number) => ({
+            id: item._id || item.id || `item-${index}`,
+            description: item.description || item.name || '',
+            quantity: item.quantity || 1,
+            price: item.price || item.unitPrice || 0,
+            catalogItemId: item.catalogItemId,
+            inventoryItemId: item.inventoryItemId,
+          }));
+          // Store items in a ref to restore after vehicle restoration completes
+          // This prevents items from being cleared during vehicle restoration
+          (window as any).__editingInvoiceItems = formattedItems;
+          setItems(formattedItems);
+        }
+        
+        // Set pricing details
+        if (invoice.discount !== undefined) {
+          setDiscount(invoice.discount);
+        }
+        // Determine discount type (percent or fixed) - default to fixed for now
+        setDiscountType("fixed");
+        
+        // Set payment method
+        if (invoice.paymentMethod) {
+          const paymentMethodLower = invoice.paymentMethod.toLowerCase();
+          if (paymentMethodLower.includes('cash')) {
+            setPaymentMethod('cash');
+          } else if (paymentMethodLower.includes('card') || paymentMethodLower.includes('pos')) {
+            setPaymentMethod('card');
+          } else if (paymentMethodLower.includes('online') || paymentMethodLower.includes('transfer')) {
+            setPaymentMethod('online');
+          }
+        }
+        
+        // Set notes
+        if (invoice.notes) {
+          setNotes(invoice.notes);
+        }
+        
+        // Set status
+        const backendStatus = invoice.status || 'Pending';
+        if (backendStatus === 'Paid') {
+          setInvoiceStatus('Paid');
+        } else {
+          // All non-Paid invoices are treated as Unpaid
+          setInvoiceStatus('Unpaid');
+        }
+        
+        // Set technician and supervisor
+        if (invoice.technician) {
+          setSelectedTechnician(invoice.technician);
+        }
+        if (invoice.supervisor) {
+          setSelectedSupervisor(invoice.supervisor);
+        }
+        
+        // Auto-advance to Products & Services step (step 2) since customer and vehicle are selected
+        setCurrentStep(2);
+      }
+    } catch (error: any) {
+      console.error('Error loading invoice for editing:', error);
+      toast.error(error.message || 'Failed to load invoice for editing');
+      sessionStorage.removeItem('editingInvoiceId');
+      setEditingInvoiceId(null);
+    } finally {
+      setIsLoadingInvoice(false);
+    }
+  };
 
   const fetchBusinessProfile = async () => {
     try {
       const response = await settingsAPI.get();
-      if (response.success && response.data?.workshop) {
-        const workshop = response.data.workshop;
-        setBusinessProfile({
-          name: (workshop.businessName || "MOMENTUM AUTOWORKS").toUpperCase(),
-          address: workshop.address || "",
-          phone: workshop.phone || "+92 300 1234567",
-          email: workshop.email || "info@momentumauto.pk",
-        });
+      if (response.success && response.data) {
+        // Update business profile
+        if (response.data.workshop) {
+          const workshop = response.data.workshop;
+          setBusinessProfile({
+            name: (workshop.businessName || "MOMENTUM AUTOWORKS").toUpperCase(),
+            address: workshop.address || "",
+            phone: workshop.phone || "+92 300 1234567",
+            email: workshop.email || "info@momentumauto.pk",
+          });
+        }
+        
+        // Update payment methods with tax rates from settings
+        if (response.data.tax) {
+          const taxSettings = response.data.tax;
+          const updatedPaymentMethods = basePaymentMethods.map(method => {
+            let taxRate = 0;
+            if (method.id === "cash") {
+              taxRate = (taxSettings.cash || 0) / 100; // Convert percentage to decimal
+            } else if (method.id === "card") {
+              taxRate = (taxSettings.card || 0) / 100;
+            } else if (method.id === "online") {
+              taxRate = (taxSettings.online || 0) / 100;
+            }
+            return { ...method, taxRate };
+          });
+          setPaymentMethods(updatedPaymentMethods);
+        }
       }
     } catch (error) {
-      console.error("Failed to fetch business profile:", error);
+      console.error("Failed to fetch settings:", error);
     }
   };
 
@@ -369,9 +869,18 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   useEffect(() => {
     if (selectedCustomerId) {
       fetchVehicles(selectedCustomerId);
+      // Don't clear vehicle ID when customer changes - let it persist if it belongs to the customer
+      // It will be validated/cleared by the restoration logic if needed
+      // Only clear vehicle if we're not restoring from draft (manual customer change)
+      if (!isRestoringDraftRef.current) {
+        // This is a manual customer change, not restoration - vehicle will be validated/cleared later if invalid
+      }
     } else {
-      setVehicles([]);
-      setSelectedVehicleId("");
+      // Only clear vehicle if we're not restoring (customer was manually cleared)
+      if (!isRestoringDraftRef.current && !restorationCompleteRef.current) {
+        setVehicles([]);
+        setSelectedVehicleId("");
+      }
     }
   }, [selectedCustomerId]);
 
@@ -385,6 +894,12 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     // Close dropdown immediately and clear search
     setCustomerSearchOpen(false);
     setCustomerSearchQuery("");
+    // Clear restoration flags since this is a manual selection
+    isRestoringDraftRef.current = false;
+    restorationCompleteRef.current = false;
+    draftVehicleIdRef.current = null;
+    // Reset items immediately when customer changes
+    setItems([]);
     // Set selected customer
     setSelectedCustomerId(customerId);
     setSelectedVehicleId(""); // Reset vehicle when customer changes
@@ -465,6 +980,9 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   const tax = afterDiscount * taxRate;
   const total = afterDiscount + tax;
 
+  // Draft auto-save key
+  const DRAFT_KEY = 'invoice_draft';
+
   const createInvoiceItem = (product?: any): InvoiceItem => ({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     description: product?.name || "",
@@ -532,6 +1050,19 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   };
 
   const handleBack = () => {
+    // If editing, always go back to invoices list instead of going through steps
+    // (customer and vehicle are already selected, so step navigation is not needed)
+    if (editingInvoiceId) {
+      // When editing, clicking back should close or go to invoices list
+      if (onClose) {
+        onClose();
+      } else {
+        navigate("/invoices");
+      }
+      return;
+    }
+    
+    // Normal flow when creating new invoice
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
     } else if (onClose) {
@@ -565,7 +1096,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       return;
     }
 
-    if (!selectedVehicle) {
+    if (!selectedVehicleId || !selectedVehicle) {
       alert("Please select a vehicle before generating an invoice.");
       return;
     }
@@ -576,6 +1107,236 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     }
 
     setShowInvoicePreview(true);
+  };
+
+  const generatePDFAsBlob = async (): Promise<Blob | null> => {
+    try {
+      const doc = new jsPDF("p", "mm", "a4");
+      const margin = 20;
+      const pageWidth = doc.internal.pageSize.getWidth();
+      let currentY = margin;
+
+      // Set background color (beige)
+      doc.setFillColor(245, 245, 220);
+      doc.rect(0, 0, pageWidth, doc.internal.pageSize.getHeight(), "F");
+
+      // INVOICE title - Large red letters on left
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(48);
+      doc.setTextColor(197, 48, 50); // Red color
+      doc.text("INVOICE", margin, currentY + 20);
+      doc.setTextColor(0, 0, 0);
+
+      // Invoice details on left below INVOICE - date, time, and invoice ID
+      doc.setFont("courier", "normal"); // Use courier as monospace alternative
+      doc.setFontSize(10);
+      const issueDate = new Date();
+      const dateStr = issueDate.toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+      const timeStr = issueDate.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      
+      // Generate invoice ID from plate number and customer name initials
+      const plateNo = selectedVehicle?.plateNo || selectedVehicle?.plate || '';
+      const customerName = selectedCustomer?.name || '';
+      const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceNumber;
+      
+      doc.text(`DATE: ${dateStr.toUpperCase()}`, margin, currentY + 30);
+      doc.text(`TIME: ${timeStr.toUpperCase()}`, margin, currentY + 36);
+      if (invoiceId) {
+        doc.text(`INVOICE ID: ${invoiceId.toUpperCase()}`, margin, currentY + 42);
+      }
+
+      // Logo and company address on right - Use original resolution
+      let logoHeight = 30; // Default height for placeholder
+      const logoDataUrl = await loadLogoAsDataUrl();
+      if (logoDataUrl) {
+        // Load image to get original dimensions
+        const img = new Image();
+        img.src = logoDataUrl;
+        await new Promise((resolve) => {
+          img.onload = resolve;
+        });
+        
+        // Calculate size maintaining aspect ratio (max 30mm height)
+        const maxHeight = 30;
+        const aspectRatio = img.width / img.height;
+        logoHeight = maxHeight;
+        const logoWidth = logoHeight * aspectRatio;
+        
+        // Position logo top right
+        const logoX = pageWidth - margin - logoWidth;
+        doc.addImage(logoDataUrl, "PNG", logoX, currentY, logoWidth, logoHeight);
+      } else {
+        // MW logo placeholder
+        const logoSize = 30;
+        logoHeight = logoSize;
+        doc.setFillColor(100, 100, 100);
+        doc.rect(pageWidth - margin - logoSize, currentY, logoSize, logoSize, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(16);
+        doc.text("MW", pageWidth - margin - logoSize / 2, currentY + logoSize / 2 + 5, { align: "center" });
+        doc.setTextColor(0, 0, 0);
+      }
+
+      // Company address on right - positioned below logo with spacing
+      const addressStartY = currentY + logoHeight + 5; // 5mm spacing below logo
+      doc.setFont("courier", "normal");
+      doc.setFontSize(10);
+      if (businessProfile.address) {
+        // Split address into lines if it contains newlines or is long
+        const addressLines = businessProfile.address.split('\n').filter(line => line.trim());
+        addressLines.forEach((line, index) => {
+          doc.text(line.toUpperCase(), pageWidth - margin, addressStartY + (index * 6), { align: "right" });
+        });
+        doc.text(businessProfile.phone, pageWidth - margin, addressStartY + (addressLines.length * 6), { align: "right" });
+      } else {
+        doc.text(businessProfile.phone, pageWidth - margin, addressStartY, { align: "right" });
+      }
+
+      currentY += 50;
+
+      // Bill To and Payment Method - Two columns
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("Bill To:", margin, currentY);
+      doc.setFont("courier", "normal");
+      doc.setFontSize(10);
+      doc.text((selectedCustomer.name || "N/A").toUpperCase(), margin, currentY + 6);
+      if (selectedCustomer.phone) {
+        doc.text(selectedCustomer.phone, margin, currentY + 12);
+      }
+      if (selectedCustomer.email) {
+        doc.text(selectedCustomer.email, margin, currentY + 18);
+      }
+
+      const paymentColumnX = pageWidth / 2;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("Payment Method", paymentColumnX, currentY);
+      doc.setFont("courier", "normal");
+      doc.setFontSize(10);
+      doc.text((selectedPaymentMethod?.label || "CASH").toUpperCase(), paymentColumnX, currentY + 6);
+      if (selectedTechnician) {
+        const technicianName = mockTechnicians.find(t => t.id === selectedTechnician)?.name;
+        if (technicianName) {
+          doc.text(technicianName.toUpperCase(), paymentColumnX, currentY + 12);
+        }
+      }
+      if (selectedCustomer.phone) {
+        doc.text(selectedCustomer.phone, paymentColumnX, currentY + 18);
+      }
+
+      currentY += 30;
+
+      // Table - Gray header, monospace font
+      autoTable(doc, {
+        startY: currentY,
+        head: [["DESCRIPTION", "QTY", "PRICE", "SUBTOTAL"]],
+        body: items.map((item) => [
+          (item.description || "Item").toUpperCase(),
+          item.quantity.toString().padStart(2, '0'),
+          `Rs${item.price.toLocaleString('en-US')}`,
+          `Rs${(item.price * item.quantity).toLocaleString('en-US')}`,
+        ]),
+        styles: { 
+          fontSize: 10, 
+          cellPadding: 4,
+          lineColor: [200, 200, 200],
+          lineWidth: 0.5,
+          font: "courier"
+        },
+        headStyles: { 
+          fillColor: [200, 200, 200], // Gray header
+          textColor: [0, 0, 0],
+          halign: "left",
+          fontStyle: "bold",
+          fontSize: 10,
+          font: "courier"
+        },
+        columnStyles: {
+          0: { halign: "left", fontStyle: "bold" },
+          1: { halign: "center" },
+          2: { halign: "right" },
+          3: { halign: "right", fontStyle: "bold" },
+        },
+        alternateRowStyles: { fillColor: [255, 255, 255] },
+        theme: "plain",
+      });
+
+      // Totals section - Right aligned, monospace with proper formatting
+      const tableFinalY = (doc as any).lastAutoTable?.finalY ?? currentY + 20;
+      const summaryX = pageWidth - margin;
+      const summaryStartY = tableFinalY + 10;
+      const labelWidth = 40;
+      
+      doc.setFont("courier", "bold");
+      doc.setFontSize(10);
+      doc.text("TAX", summaryX - labelWidth, summaryStartY, { align: "right" });
+      doc.text(`Rs${Math.round(tax).toLocaleString('en-US')}`, summaryX, summaryStartY, { align: "right" });
+      
+      doc.setFont("courier", "bold");
+      doc.setFontSize(12);
+      doc.text("GRAND TOTAL", summaryX - labelWidth, summaryStartY + 8, { align: "right" });
+      doc.text(`Rs${Math.round(total).toLocaleString('en-US')}`, summaryX, summaryStartY + 8, { align: "right" });
+
+      // Footer - Terms and Contact
+      currentY = summaryStartY + 25;
+      const footerLeftX = margin;
+      const footerRightX = pageWidth - margin;
+
+      // Terms & Conditions on left
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("TERM & CONDITION", footerLeftX, currentY);
+      doc.setFont("courier", "normal");
+      doc.setFontSize(8);
+      const termsText = notes || DEFAULT_TERMS;
+      doc.text(
+        termsText,
+        footerLeftX,
+        currentY + 6,
+        { maxWidth: (pageWidth - margin * 2) / 2 }
+      );
+
+      // Contact info on right
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("FOR ANY QUESTIONS, PLEASE CONTACT", footerRightX, currentY, { align: "right" });
+      doc.setFont("courier", "normal");
+      doc.setFontSize(10);
+      doc.text("INFO@MOMENTUMAUTOWORKS.COM", footerRightX, currentY + 6, { align: "right" });
+      doc.text("OR +92 300 1234567.", footerRightX, currentY + 12, { align: "right" });
+
+      // Signature
+      if (selectedTechnician) {
+        const technicianName = mockTechnicians.find(t => t.id === selectedTechnician)?.name;
+        if (technicianName) {
+          doc.setDrawColor(0, 0, 0);
+          doc.line(footerRightX - 50, currentY + 25, footerRightX, currentY + 25);
+          doc.setFont("courier", "bold");
+          doc.setFontSize(10);
+          doc.text(technicianName.toUpperCase(), footerRightX, currentY + 30, { align: "right" });
+          doc.setFont("courier", "normal");
+          doc.setFontSize(8);
+          doc.text("GENERAL MANAGER", footerRightX, currentY + 35, { align: "right" });
+        }
+      }
+
+      // Generate blob instead of saving
+      const pdfBlob = doc.output('blob');
+      return pdfBlob;
+    } catch (error) {
+      console.error("Failed to generate PDF blob:", error);
+      return null;
+    }
   };
 
   const handleGenerateInvoicePDF = async (): Promise<boolean> => {
@@ -845,6 +1606,171 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     window.location.href = mailtoUrl;
   };
 
+  const handleWhatsAppInvoice = async () => {
+    if (!selectedCustomer?.phone) {
+      toast.error("Customer phone number is not available");
+      return;
+    }
+
+    try {
+      setIsGeneratingPdf(true);
+      
+      // Generate PDF first
+      const pdfBlob = await generatePDFAsBlob();
+      
+      if (!pdfBlob) {
+        toast.error("Failed to generate invoice PDF");
+        setIsGeneratingPdf(false);
+        return;
+      }
+
+      // Create a temporary download link
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      
+      // Build vehicle info - show make and model if available
+      let vehicleInfo = 'N/A';
+      if (selectedVehicle) {
+        const vehicleParts = [];
+        if (selectedVehicle.make) vehicleParts.push(selectedVehicle.make);
+        if (selectedVehicle.model) vehicleParts.push(selectedVehicle.model);
+        if (selectedVehicle.year) vehicleParts.push(selectedVehicle.year);
+        if (vehicleParts.length > 0) {
+          vehicleInfo = vehicleParts.join(' ');
+        }
+      }
+
+      const plateNo = selectedVehicle?.plateNo || selectedVehicle?.plate || '';
+      const customerName = selectedCustomer?.name || '';
+      const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceNumber;
+      
+      // Format total amount with tax info
+      const totalAmountText = tax > 0 
+        ? `Rs ${total.toLocaleString()} (with tax)`
+        : `Rs ${total.toLocaleString()}`;
+      
+      // Create a simple message
+      const message = `*Invoice ${invoiceId} - Momentum AutoWorks*\n\n` +
+        `Dear ${selectedCustomer.name},\n\n` +
+        `Your invoice details:\n` +
+        `📄 Invoice ID: ${invoiceId}\n` +
+        `📅 Date: ${new Date().toLocaleDateString()}\n` +
+        `🚗 Vehicle: ${vehicleInfo}\n` +
+        `💰 Total Amount: ${totalAmountText}\n\n` +
+        `Thank you for choosing Momentum AutoWorks!`;
+
+      // Remove all non-digit characters from phone number
+      const phone = selectedCustomer.phone.replace(/\D/g, '');
+      
+      if (!phone) {
+        toast.error("Invalid phone number format");
+        return;
+      }
+
+      // Download PDF first
+      const link = document.createElement('a');
+      link.href = pdfUrl;
+      link.download = `Invoice-${invoiceId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Open WhatsApp Web with pre-filled message
+      const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      window.open(whatsappUrl, '_blank');
+      
+      // Clean up the blob URL after a delay
+      setTimeout(() => {
+        URL.revokeObjectURL(pdfUrl);
+      }, 100);
+      
+      toast.success("Invoice PDF downloaded! WhatsApp opened. You can attach the PDF from your downloads.");
+    } catch (error: any) {
+      console.error("Failed to send invoice via WhatsApp:", error);
+      toast.error(error.message || "Failed to generate invoice PDF");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+
+  // Reset form to initial state
+  const resetForm = () => {
+    setSelectedCustomerId('');
+    setSelectedVehicleId('');
+    setItems([]);
+    setDiscount(0);
+    setDiscountType('percent');
+    setPaymentMethod('cash');
+    setNotes('');
+    setInvoiceStatus('Unpaid');
+    setSelectedTechnician('');
+    setSelectedSupervisor('');
+    setCurrentStep(1);
+    // Clear refs
+    prevCustomerIdRef.current = null;
+    prevVehicleIdRef.current = null;
+    draftVehicleIdRef.current = null;
+    isRestoringDraftRef.current = false;
+    restorationCompleteRef.current = false;
+  };
+
+  // Auto-save draft invoice to database
+  const autoSaveDraftInvoice = async () => {
+    // Don't auto-save if editing an existing invoice
+    if (editingInvoiceId) {
+      return;
+    }
+
+    // Only save if we have customer, vehicle, and at least one item
+    if (!selectedCustomerId || !selectedVehicleId || !items || items.length === 0) {
+      return;
+    }
+
+    try {
+      const invoicePayload = buildInvoicePayload();
+      // Force status to Pending for drafts
+      invoicePayload.status = 'Pending';
+      // Don't include payment method for drafts
+      invoicePayload.paymentMethod = undefined;
+
+      // Check for existing draft invoice ID (from state or localStorage/ref)
+      const existingDraftId = draftInvoiceId || (window as any).__currentDraftInvoiceId;
+      
+      if (existingDraftId) {
+        // Update existing draft (prevent duplicates)
+        const response = await invoicesAPI.update(existingDraftId, invoicePayload);
+        if (response.success) {
+          // Ensure state is updated
+          if (!draftInvoiceId) {
+            setDraftInvoiceId(existingDraftId);
+          }
+          console.log('Draft invoice updated:', existingDraftId);
+          // Reset form after successful draft save
+          resetForm();
+          // Clear localStorage draft since it's saved to database
+          localStorage.removeItem(DRAFT_KEY);
+        }
+      } else {
+        // Only create new draft if one doesn't exist
+        const response = await invoicesAPI.create(invoicePayload);
+        if (response.success && response.data) {
+          const newDraftId = response.data._id || response.data.id;
+          setDraftInvoiceId(newDraftId);
+          (window as any).__currentDraftInvoiceId = newDraftId;
+          console.log('Draft invoice created:', newDraftId);
+          // Reset form after successful draft save
+          resetForm();
+          // Clear localStorage draft since it's saved to database
+          localStorage.removeItem(DRAFT_KEY);
+        }
+      }
+    } catch (error: any) {
+      console.error('Failed to auto-save draft invoice:', error);
+      // Don't show error toast for auto-save failures to avoid annoying the user
+    }
+  };
+
   const buildInvoicePayload = () => {
     // Get customer ID
     const customerId = selectedCustomer?._id || selectedCustomer?.id || selectedCustomerId;
@@ -867,19 +1793,30 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       inventoryItemId: (item as any).inventoryItemId || undefined,
     }));
 
-    // Determine status: If payment method is selected (cash, card, or online), mark as Paid
-    // Otherwise, mark as Pending
+    // Determine status: Map frontend status to backend status
     let mappedStatus = 'Pending';
+    let mappedPaymentMethod: string | undefined = undefined;
+    
     if (invoiceStatus === 'Paid') {
       mappedStatus = 'Paid';
-    } else if (invoiceStatus === 'Draft') {
-      mappedStatus = 'Pending'; // Draft maps to Pending in backend
+      // Set payment method when marking as Paid
+      mappedPaymentMethod = paymentMethod === 'cash' ? 'Cash' : 
+                            paymentMethod === 'card' ? 'Card/POS' : 
+                            paymentMethod === 'online' ? 'Online Transfer' : 
+                            paymentMethod || 'Cash'; // Default to Cash if no method selected
     } else if (invoiceStatus === 'Unpaid') {
       mappedStatus = 'Pending'; // Unpaid maps to Pending in backend
+      // Set paymentMethod to empty string for Unpaid (distinguishes from Draft)
+      mappedPaymentMethod = '';
     } else if (paymentMethod && (paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'online')) {
       // If payment method is selected, payment has been received, mark as Paid
       mappedStatus = 'Paid';
+      mappedPaymentMethod = paymentMethod === 'cash' ? 'Cash' : 
+                            paymentMethod === 'card' ? 'Card/POS' : 
+                            paymentMethod === 'online' ? 'Online Transfer' : 
+                            paymentMethod;
     }
+    // If no status selected and no payment method, paymentMethod stays undefined (Draft)
 
     // Get technician and supervisor names as strings (they're stored as IDs)
     const technicianObj = mockTechnicians.find(t => t.id === selectedTechnician);
@@ -896,10 +1833,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       tax,
       amount: total, // Backend expects 'amount' not 'total'
       status: mappedStatus,
-      paymentMethod: paymentMethod === 'cash' ? 'Cash' : 
-                     paymentMethod === 'card' ? 'Card/POS' : 
-                     paymentMethod === 'online' ? 'Online Transfer' : 
-                     paymentMethod || undefined,
+      paymentMethod: mappedPaymentMethod,
       technician: technicianName || undefined,
       supervisor: supervisorName || undefined,
       notes: notes || undefined,
@@ -913,7 +1847,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       return;
     }
 
-    if (!selectedCustomer || !selectedVehicle || items.length === 0) {
+    if (!selectedCustomer || !selectedVehicleId || !selectedVehicle || items.length === 0) {
       toast.error("Please complete all required fields before creating the invoice.");
       return;
     }
@@ -924,23 +1858,50 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       setIsGeneratingPdf(true);
       setIsCreatingInvoice(true);
 
-      // First, generate and download the PDF
-      const pdfGenerated = await handleGenerateInvoicePDF();
-      
-      if (!pdfGenerated) {
-        isProcessingRef.current = false;
-        setIsGeneratingPdf(false);
-        setIsCreatingInvoice(false);
-        return;
+      // Only generate and download PDF if status is "Paid"
+      let pdfGenerated = true; // Default to true if we don't need to generate PDF
+      if (invoiceStatus === 'Paid') {
+        pdfGenerated = await handleGenerateInvoicePDF();
+        
+        if (!pdfGenerated) {
+          isProcessingRef.current = false;
+          setIsGeneratingPdf(false);
+          setIsCreatingInvoice(false);
+          return;
+        }
       }
 
-      // Then, create the invoice in the database
+      // Then, create or update the invoice in the database
       const invoicePayload = buildInvoicePayload();
       
-      const response = await invoicesAPI.create(invoicePayload);
+      let response;
+      if (editingInvoiceId) {
+        // Update existing invoice
+        response = await invoicesAPI.update(editingInvoiceId, invoicePayload);
+      } else if (draftInvoiceId) {
+        // Update existing draft invoice
+        response = await invoicesAPI.update(draftInvoiceId, invoicePayload);
+      } else {
+        // Create new invoice
+        response = await invoicesAPI.create(invoicePayload);
+      }
       
       if (response.success) {
-        toast.success("Invoice created and downloaded successfully!");
+        const successMessage = editingInvoiceId 
+          ? (invoiceStatus === 'Paid' ? "Invoice updated and downloaded successfully!" : "Invoice updated successfully!")
+          : (invoiceStatus === 'Paid' ? "Invoice created and downloaded successfully!" : "Invoice created successfully!");
+        toast.success(successMessage);
+        
+        // Clear editing invoice ID and draft invoice ID
+        if (editingInvoiceId) {
+          sessionStorage.removeItem('editingInvoiceId');
+          setEditingInvoiceId(null);
+        }
+        // Clear draft invoice ID (if it was a draft that got completed)
+        if (draftInvoiceId && !editingInvoiceId) {
+          setDraftInvoiceId(null);
+        }
+        localStorage.removeItem(DRAFT_KEY);
         
         // Call onSubmit callback if provided
         if (onSubmit) {
@@ -948,9 +1909,13 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         }
         
         // Navigate to invoices page
-        navigate("/invoices");
+        if (onClose) {
+          onClose();
+        } else {
+          navigate("/invoices");
+        }
       } else {
-        toast.error(response.message || "Failed to create invoice");
+        toast.error(response.message || (editingInvoiceId ? "Failed to update invoice" : "Failed to create invoice"));
         isProcessingRef.current = false;
         setIsGeneratingPdf(false);
         setIsCreatingInvoice(false);
@@ -965,7 +1930,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   };
 
   const handleCreateInvoice = async () => {
-    if (!selectedCustomer || !selectedVehicle || items.length === 0) {
+    if (!selectedCustomer || !selectedVehicleId || !selectedVehicle || items.length === 0) {
       toast.error("Please complete all required fields before creating the invoice.");
       return;
     }
@@ -974,10 +1939,29 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       setIsCreatingInvoice(true);
       const invoicePayload = buildInvoicePayload();
       
-      const response = await invoicesAPI.create(invoicePayload);
+      let response;
+      if (editingInvoiceId) {
+        // Update existing invoice
+        response = await invoicesAPI.update(editingInvoiceId, invoicePayload);
+      } else {
+        // Create new invoice
+        response = await invoicesAPI.create(invoicePayload);
+      }
       
       if (response.success) {
-        toast.success("Invoice created successfully!");
+        toast.success(editingInvoiceId ? "Invoice updated successfully!" : "Invoice created successfully!");
+        
+        // Clear editing invoice ID and draft after successful creation/update
+        if (editingInvoiceId) {
+          sessionStorage.removeItem('editingInvoiceId');
+          setEditingInvoiceId(null);
+        }
+        // Clear draft invoice ID and ref (if it was a draft that got completed)
+        if (draftInvoiceId && !editingInvoiceId) {
+          setDraftInvoiceId(null);
+          (window as any).__currentDraftInvoiceId = null;
+        }
+        localStorage.removeItem(DRAFT_KEY);
         
         // Close the preview modal
         setShowInvoicePreview(false);
@@ -988,13 +1972,17 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         }
         
         // Navigate to invoices page
-        navigate("/invoices");
+        if (onClose) {
+          onClose();
+        } else {
+          navigate("/invoices");
+        }
       } else {
-        toast.error(response.message || "Failed to create invoice");
+        toast.error(response.message || (editingInvoiceId ? "Failed to update invoice" : "Failed to create invoice"));
       }
     } catch (error: any) {
-      console.error("Failed to create invoice:", error);
-      toast.error(error.message || "Failed to create invoice. Please try again.");
+      console.error("Failed to create/update invoice:", error);
+      toast.error(error.message || (editingInvoiceId ? "Failed to update invoice. Please try again." : "Failed to create invoice. Please try again."));
     } finally {
       setIsCreatingInvoice(false);
     }
@@ -1084,13 +2072,30 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
 
   const selectedCatalogCount = selectedCatalogProducts.length;
 
+  // Show loading state while loading invoice for editing
+  if (isLoadingInvoice) {
+    return (
+      <div className="flex items-center justify-center py-8 h-full">
+        <Loader2 className="h-6 w-6 animate-spin text-[#c53032]" />
+        <span className="ml-2 text-gray-600">Loading invoice...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-hidden flex flex-col bg-slate-50">
       {/* Header */}
       <div className="px-6 py-5 flex items-center justify-between border-b shrink-0 bg-[#c53032] text-white">
         <div className="flex items-center gap-3">
           <button 
-            onClick={handleBack}
+            onClick={() => {
+              sessionStorage.removeItem('editingInvoiceId');
+              if (onClose) {
+                onClose();
+              } else {
+                navigate("/dashboard");
+              }
+            }}
             className="w-10 h-10 rounded-lg hover:bg-white/10 flex items-center justify-center transition-colors mr-1"
           >
             <ChevronLeft className="h-5 w-5 text-white" />
@@ -1099,14 +2104,13 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
             <FileText className="h-6 w-6 text-white" />
           </div>
           <div>
-            <h2 className="text-white mb-0.5">Create New Invoice</h2>
+            <h2 className="text-white mb-0.5">{editingInvoiceId ? "Edit Invoice" : "Create New Invoice"}</h2>
             <p className="text-sm text-red-100">Step-by-step invoice generation</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <Badge 
             className={
-              invoiceStatus === "Draft" ? "bg-yellow-500 hover:bg-yellow-600 text-white border-0" :
               invoiceStatus === "Unpaid" ? "bg-orange-500 hover:bg-orange-600 text-white border-0" :
               "bg-[#a6212a] hover:bg-[#8f1c23] text-white border-0"
             }
@@ -1119,36 +2123,66 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       {/* Progress Steps */}
       <div className="px-8 py-5 border-b shrink-0 bg-white">
         <div className="flex items-center justify-between max-w-4xl">
-          {steps.map((step, index) => (
-            <div key={step.number} className="flex items-center flex-1">
-              <div className="flex items-center gap-3">
-                <div className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all ${
-                  currentStep === step.number 
-                    ? "bg-[#c53032] text-white shadow-sm"
-                    : currentStep > step.number
-                    ? "bg-green-500 text-white"
-                    : "bg-slate-100 text-slate-400"
-                }`}>
-                  {currentStep > step.number ? (
-                    <Check className="h-5 w-5" />
-                  ) : (
-                    <step.icon className="h-5 w-5" />
-                  )}
-                </div>
-                <div>
-                  <p className={`text-xs mb-0.5 ${currentStep === step.number ? "text-[#c53032]" : "text-slate-400"}`}>
-                    Step {step.number}
-                  </p>
-                  <p className={`text-sm ${currentStep === step.number ? "text-slate-900" : "text-slate-500"}`}>
-                    {step.title}
-                  </p>
-                </div>
+          {steps.map((step, index) => {
+            const isCompleted = currentStep > step.number;
+            const isCurrent = currentStep === step.number;
+            // When editing, all steps are clickable. When creating new, only completed/current steps are clickable
+            const isClickable = editingInvoiceId ? true : (isCompleted || isCurrent);
+            
+            const handleStepClick = () => {
+              if (!isClickable) return;
+              
+              // When editing, allow navigation to any step
+              if (editingInvoiceId) {
+                setCurrentStep(step.number);
+                return;
+              }
+              
+              // When creating new, only allow navigation to completed steps or current step
+              if (isCompleted || isCurrent) {
+                setCurrentStep(step.number);
+              }
+            };
+            
+            return (
+              <div key={step.number} className="flex items-center flex-1">
+                <button
+                  onClick={handleStepClick}
+                  disabled={!isClickable}
+                  className={`flex items-center gap-3 transition-all ${
+                    isClickable 
+                      ? "cursor-pointer hover:opacity-80" 
+                      : "cursor-not-allowed opacity-50"
+                  }`}
+                >
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all ${
+                    isCurrent 
+                      ? "bg-[#c53032] text-white shadow-sm"
+                      : isCompleted
+                      ? "bg-green-500 text-white"
+                      : "bg-slate-100 text-slate-400"
+                  }`}>
+                    {isCompleted ? (
+                      <Check className="h-5 w-5" />
+                    ) : (
+                      <step.icon className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div>
+                    <p className={`text-xs mb-0.5 ${isCurrent ? "text-[#c53032]" : "text-slate-400"}`}>
+                      Step {step.number}
+                    </p>
+                    <p className={`text-sm ${isCurrent ? "text-slate-900" : "text-slate-500"}`}>
+                      {step.title}
+                    </p>
+                  </div>
+                </button>
+                {index < steps.length - 1 && (
+                  <div className={`flex-1 h-px mx-6 transition-colors ${isCompleted ? "bg-green-500" : "bg-slate-200"}`} />
+                )}
               </div>
-              {index < steps.length - 1 && (
-                <div className={`flex-1 h-px mx-6 transition-colors ${currentStep > step.number ? "bg-green-500" : "bg-slate-200"}`} />
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -1353,7 +2387,16 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                   <div className="space-y-3">
                     <Select 
                       value={selectedVehicleId} 
-                      onValueChange={setSelectedVehicleId}
+                      onValueChange={(vehicleId) => {
+                        // Clear restoration flags since this is a manual selection
+                        isRestoringDraftRef.current = false;
+                        restorationCompleteRef.current = false;
+                        draftVehicleIdRef.current = null;
+                        // Reset items immediately when vehicle changes
+                        setItems([]);
+                        setSelectedVehicleId(vehicleId);
+                        // Items will also be reset by the useEffect that watches selectedVehicleId
+                      }}
                       disabled={!selectedCustomerId || loadingVehicles}
                     >
                       <SelectTrigger>
@@ -1595,11 +2638,28 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                                 {subtotal.toLocaleString()}
                               </span>
                             </div>
-                            <div className="flex justify-between items-center py-2">
+                            <div className="flex justify-end py-1.5">
+                              <span className="text-base font-semibold text-slate-800">Exclusive of tax</span>
+                            </div>
+                            {tax > 0 && (
+                              <>
+                                <div className="flex justify-between items-center py-2 border-t border-slate-200">
+                                  <span className="text-sm font-medium text-slate-700">Tax ({Math.round(taxRate * 100)}%):</span>
+                                  <span className="text-sm font-semibold text-slate-900">
+                                    <span className="text-xs font-normal mr-0.5">₨</span>
+                                    {tax.toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="flex justify-end py-1.5">
+                                  <span className="text-base font-semibold text-slate-800">Inclusive of tax</span>
+                                </div>
+                              </>
+                            )}
+                            <div className="flex justify-between items-center py-2 border-t border-slate-300">
                               <span className="text-base font-semibold text-slate-900">Total:</span>
                               <span className="text-lg font-bold text-[#c53032]">
                                 <span className="text-sm font-normal mr-0.5">₨</span>
-                                {subtotal.toLocaleString()}
+                                {total.toLocaleString()}
                               </span>
                             </div>
                           </div>
@@ -1685,6 +2745,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                       onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
                       placeholder="0"
                       disabled={!canEditPricing}
+                      className="no-spinner"
                     />
                   </div>
                   <div>
@@ -1790,15 +2851,35 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                     <FileText className="h-4 w-4 mr-2" />
                     Preview Invoice
                   </Button>
-                  <Button 
-                    variant="outline"
-                    className="w-full"
-                    onClick={handleEmailInvoice}
-                    disabled={!selectedCustomer?.email}
-                  >
-                    <Mail className="h-4 w-4 mr-2" />
-                    Email Invoice to Customer
-                  </Button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button 
+                      variant="outline"
+                      className="w-full"
+                      onClick={handleEmailInvoice}
+                      disabled={!selectedCustomer?.email}
+                    >
+                      <Mail className="h-4 w-4 mr-2" />
+                      Email Invoice
+                    </Button>
+                    <Button 
+                      variant="outline"
+                      className="w-full"
+                      onClick={handleWhatsAppInvoice}
+                      disabled={!selectedCustomer?.phone || isGeneratingPdf}
+                    >
+                      {isGeneratingPdf ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquare className="h-4 w-4 mr-2" />
+                          WhatsApp Invoice
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </div>
 
@@ -1806,14 +2887,11 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
 
               <div>
                 <Label className="text-sm mb-2">Invoice Status</Label>
-                <Select value={invoiceStatus} onValueChange={(v: "Draft" | "Unpaid" | "Paid") => setInvoiceStatus(v)}>
+                <Select value={invoiceStatus} onValueChange={(v: "Unpaid" | "Paid") => setInvoiceStatus(v)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Draft">
-                      <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">Draft</Badge>
-                    </SelectItem>
                     <SelectItem value="Unpaid">
                       <Badge className="bg-orange-100 text-orange-700 border-orange-200">Unpaid</Badge>
                     </SelectItem>

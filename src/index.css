@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide spinner arrows on number inputs */
+input[type="number"].no-spinner::-webkit-inner-spin-button,
+input[type="number"].no-spinner::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"].no-spinner {
+  -moz-appearance: textfield;
+}
+
 /* Font files are not included - using system fonts as fallback */
 /* If you want to add custom fonts, place them in public/fonts/ and uncomment the @font-face rules */
 

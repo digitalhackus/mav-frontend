@@ -1806,8 +1806,9 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                             paymentMethod || 'Cash'; // Default to Cash if no method selected
     } else if (invoiceStatus === 'Unpaid') {
       mappedStatus = 'Pending'; // Unpaid maps to Pending in backend
-      // Set paymentMethod to empty string for Unpaid (distinguishes from Draft)
-      mappedPaymentMethod = '';
+      // Use "Other" as a placeholder for Unpaid invoices (completed but not paid)
+      // This distinguishes from Draft (paymentMethod = undefined) while satisfying enum validation
+      mappedPaymentMethod = 'Other';
     } else if (paymentMethod && (paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'online')) {
       // If payment method is selected, payment has been received, mark as Paid
       mappedStatus = 'Paid';

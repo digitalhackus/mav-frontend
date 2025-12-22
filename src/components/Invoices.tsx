@@ -64,7 +64,7 @@ const getDisplayStatus = (invoice: any): "Draft" | "Unpaid" | "Paid" => {
   }
   
   // If status is "Pending" and payment method is null/undefined, it's a Draft
-  // If paymentMethod is empty string '', it's Unpaid (completed but not paid)
+  // If paymentMethod is "Other", it's Unpaid (completed but not paid yet)
   if (backendStatus === "Pending" && (invoice.paymentMethod === null || invoice.paymentMethod === undefined)) {
     return "Draft";
   }

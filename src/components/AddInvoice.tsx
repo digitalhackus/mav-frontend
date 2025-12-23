@@ -141,6 +141,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   const prevVehicleIdRef = useRef<string | null>(null);
   const prevCustomerIdRef = useRef<string | null>(null);
   const restorationCompleteRef = useRef(false);
+  const invoiceCompletedRef = useRef(false); // Track if invoice was completed (don't save as draft)
   
   // Get initial values from URL params if present
   const urlCustomerId = searchParams.get('customerId') || '';
@@ -498,45 +499,19 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     }
   }, [selectedCustomerId, selectedVehicleId, items, discount, discountType, paymentMethod, notes, invoiceStatus, currentStep, draftInvoiceId]);
 
-  // Auto-save draft invoice to database (debounced) - function defined later
-  useEffect(() => {
-    // Clear any pending auto-save
-    if (autoSaveTimeoutRef.current) {
-      clearTimeout(autoSaveTimeoutRef.current);
-    }
-
-    // Don't auto-save if editing an existing invoice
-    if (editingInvoiceId) {
-      return;
-    }
-
-    // Only auto-save if we have customer, vehicle, and at least one item
-    if (selectedCustomerId && selectedVehicleId && items && items.length > 0) {
-      // Debounce auto-save by 2 seconds
-      autoSaveTimeoutRef.current = setTimeout(() => {
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        autoSaveDraftInvoice();
-      }, 2000);
-    }
-
-    return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current);
-      }
-    };
-  }, [selectedCustomerId, selectedVehicleId, items, editingInvoiceId]);
+  // NOTE: Auto-save on timer is disabled - drafts are only saved when user leaves the page
+  // This prevents invoices from being marked as draft while user is still working on them
 
   // Save draft before unmount or page unload
   useEffect(() => {
     const handleBeforeUnload = () => {
-      // Save draft to database if we have customer, vehicle, and items
-      if (!editingInvoiceId && selectedCustomerId && selectedVehicleId && items && items.length > 0) {
-        // Trigger immediate auto-save (don't wait for debounce)
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        autoSaveDraftInvoice();
+      // Don't save draft if invoice was already completed
+      if (invoiceCompletedRef.current) {
+        localStorage.removeItem(DRAFT_KEY);
+        return;
       }
       
-      // Save draft to localStorage if we have customer, vehicle, or items
+      // Save draft to localStorage for recovery (beforeunload can't reliably make API calls)
       if (selectedCustomerId || selectedVehicleId || (items && items.length > 0)) {
         const draftData = {
           selectedCustomerId,
@@ -553,7 +528,6 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         };
         localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
       } else {
-        // Clear draft if nothing is selected
         localStorage.removeItem(DRAFT_KEY);
       }
     };
@@ -562,7 +536,13 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       
-      // Save draft to database when component unmounts (if not editing)
+      // Don't save draft if invoice was already completed
+      if (invoiceCompletedRef.current) {
+        localStorage.removeItem(DRAFT_KEY);
+        return;
+      }
+      
+      // Save draft to database when component unmounts (user navigating away without completing)
       if (!editingInvoiceId && selectedCustomerId && selectedVehicleId && items && items.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-use-before-define
         autoSaveDraftInvoice();
@@ -585,7 +565,6 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         };
         localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
       } else {
-        // Clear draft if nothing is selected
         localStorage.removeItem(DRAFT_KEY);
       }
     };
@@ -822,15 +801,32 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         });
 
         // Sort by count and get top items (services and inventory items, max 8)
-        const mostUsed = Object.values(itemCounts)
+        const sortedItems = Object.values(itemCounts)
           .filter((entry: any) => 
             entry.item.type === 'service' || 
             entry.item.isInventoryItem || 
             entry.item.type === 'product'
           )
           .sort((a: any, b: any) => b.count - a.count)
-          .slice(0, 8)
           .map((entry: any) => entry.item);
+        
+        // Deduplicate by item id and name to prevent duplicate cards
+        const seenIds = new Set<string>();
+        const seenNames = new Set<string>();
+        const mostUsed = sortedItems.filter((item: any) => {
+          const itemId = item.id || item.catalogItem?._id || item.inventoryItem?._id;
+          const itemName = item.name?.toLowerCase();
+          
+          // Skip if we've already seen this ID or name
+          if (itemId && seenIds.has(itemId)) return false;
+          if (itemName && seenNames.has(itemName)) return false;
+          
+          // Mark as seen
+          if (itemId) seenIds.add(itemId);
+          if (itemName) seenNames.add(itemName);
+          
+          return true;
+        }).slice(0, 8);
 
         setMostUsedServices(mostUsed);
       }
@@ -1746,8 +1742,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
             setDraftInvoiceId(existingDraftId);
           }
           console.log('Draft invoice updated:', existingDraftId);
-          // Reset form after successful draft save
-          resetForm();
+          // Don't reset form - keep the user on the same step with their data
           // Clear localStorage draft since it's saved to database
           localStorage.removeItem(DRAFT_KEY);
         }
@@ -1759,8 +1754,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
           setDraftInvoiceId(newDraftId);
           (window as any).__currentDraftInvoiceId = newDraftId;
           console.log('Draft invoice created:', newDraftId);
-          // Reset form after successful draft save
-          resetForm();
+          // Don't reset form - keep the user on the same step with their data
           // Clear localStorage draft since it's saved to database
           localStorage.removeItem(DRAFT_KEY);
         }
@@ -1794,6 +1788,10 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     }));
 
     // Determine status: Map frontend status to backend status
+    // Status mapping:
+    // - Paid: Invoice completed and payment received → status = "Paid", paymentMethod = selected method
+    // - Unpaid: Invoice completed but no payment yet → status = "Pending", paymentMethod = "Other" (marks as completed)
+    // - Draft: User left without completing → status = "Pending", paymentMethod = undefined/null
     let mappedStatus = 'Pending';
     let mappedPaymentMethod: string | undefined = undefined;
     
@@ -1803,21 +1801,13 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       mappedPaymentMethod = paymentMethod === 'cash' ? 'Cash' : 
                             paymentMethod === 'card' ? 'Card/POS' : 
                             paymentMethod === 'online' ? 'Online Transfer' : 
-                            paymentMethod || 'Cash'; // Default to Cash if no method selected
+                            'Cash'; // Default to Cash if no method selected
     } else if (invoiceStatus === 'Unpaid') {
       mappedStatus = 'Pending'; // Unpaid maps to Pending in backend
-      // Use "Other" as a placeholder for Unpaid invoices (completed but not paid)
-      // This distinguishes from Draft (paymentMethod = undefined) while satisfying enum validation
+      // Use "Other" to mark as completed but unpaid (distinguishes from Draft where paymentMethod = undefined)
       mappedPaymentMethod = 'Other';
-    } else if (paymentMethod && (paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'online')) {
-      // If payment method is selected, payment has been received, mark as Paid
-      mappedStatus = 'Paid';
-      mappedPaymentMethod = paymentMethod === 'cash' ? 'Cash' : 
-                            paymentMethod === 'card' ? 'Card/POS' : 
-                            paymentMethod === 'online' ? 'Online Transfer' : 
-                            paymentMethod;
     }
-    // If no status selected and no payment method, paymentMethod stays undefined (Draft)
+    // If no status selected, paymentMethod stays undefined (Draft)
 
     // Get technician and supervisor names as strings (they're stored as IDs)
     const technicianObj = mockTechnicians.find(t => t.id === selectedTechnician);
@@ -1888,6 +1878,9 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       }
       
       if (response.success) {
+        // Mark invoice as completed to prevent saving as draft on unmount
+        invoiceCompletedRef.current = true;
+        
         const successMessage = editingInvoiceId 
           ? (invoiceStatus === 'Paid' ? "Invoice updated and downloaded successfully!" : "Invoice updated successfully!")
           : (invoiceStatus === 'Paid' ? "Invoice created and downloaded successfully!" : "Invoice created successfully!");
@@ -1901,6 +1894,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         // Clear draft invoice ID (if it was a draft that got completed)
         if (draftInvoiceId && !editingInvoiceId) {
           setDraftInvoiceId(null);
+          (window as any).__currentDraftInvoiceId = null;
         }
         localStorage.removeItem(DRAFT_KEY);
         
@@ -1950,6 +1944,9 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       }
       
       if (response.success) {
+        // Mark invoice as completed to prevent saving as draft on unmount
+        invoiceCompletedRef.current = true;
+        
         toast.success(editingInvoiceId ? "Invoice updated successfully!" : "Invoice created successfully!");
         
         // Clear editing invoice ID and draft after successful creation/update
@@ -2846,29 +2843,47 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                 
                 <div className="space-y-3">
                   <Button 
+                    type="button"
                     className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-70"
-                    onClick={handleShowInvoicePreview}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleShowInvoicePreview();
+                    }}
+                    disabled={isCreatingInvoice}
                   >
                     <FileText className="h-4 w-4 mr-2" />
                     Preview Invoice
                   </Button>
                   <div className="grid grid-cols-2 gap-3">
                     <Button 
+                      type="button"
                       variant="outline"
                       className="w-full"
-                      onClick={handleEmailInvoice}
-                      disabled={!selectedCustomer?.email}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleEmailInvoice();
+                      }}
+                      disabled={!selectedCustomer?.email || isCreatingInvoice}
                     >
                       <Mail className="h-4 w-4 mr-2" />
                       Email Invoice
                     </Button>
                     <Button 
+                      type="button"
                       variant="outline"
                       className="w-full"
-                      onClick={handleWhatsAppInvoice}
-                      disabled={!selectedCustomer?.phone || isGeneratingPdf}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!isGeneratingPdf && !isCreatingInvoice) {
+                          handleWhatsAppInvoice();
+                        }
+                      }}
+                      disabled={!selectedCustomer?.phone || isGeneratingPdf || isCreatingInvoice}
                     >
-                      {isGeneratingPdf ? (
+                      {(isGeneratingPdf && !isCreatingInvoice) ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                           Generating...
@@ -2928,14 +2943,19 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
               </Button>
             ) : (
               <Button 
+                type="button"
                 className="bg-[#c53032] hover:bg-[#a6212a] text-white shadow-md px-8 py-6 text-base font-semibold min-w-[200px]"
-                onClick={() => { void handleCompleteInvoice(); }}
-                disabled={isGeneratingPdf}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleCompleteInvoice();
+                }}
+                disabled={isGeneratingPdf || isCreatingInvoice}
               >
-                {isGeneratingPdf ? (
+                {(isGeneratingPdf || isCreatingInvoice) ? (
                   <>
                     <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    Generating...
+                    {isCreatingInvoice ? 'Creating...' : 'Generating...'}
                   </>
                 ) : (
                   <>
@@ -3220,20 +3240,6 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
             discount: discountAmount,
             notes: notes,
           }}
-          onShare={(method) => {
-            if (method === 'whatsapp') {
-              const message = `Invoice ${invoiceNumber} - ${formatCurrency(total)}`;
-              const phone = selectedCustomer.phone?.replace(/\D/g, '') || '';
-              if (phone) {
-                const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-                window.open(whatsappUrl, '_blank');
-              }
-            } else if (method === 'email') {
-              handleEmailInvoice();
-            }
-          }}
-          onCreateInvoice={handleCreateInvoice}
-          isCreating={isCreatingInvoice}
         />
       )}
     </div>

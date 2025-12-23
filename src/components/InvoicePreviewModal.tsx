@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
-import { Download, Share2, Printer, X, Mail, MessageCircle, Check, Loader2 } from "lucide-react";
+import { Download, Printer, Loader2 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
@@ -47,9 +47,6 @@ interface InvoicePreviewModalProps {
     discount?: number;
     notes?: string;
   };
-  onShare?: (method: 'email' | 'whatsapp') => void;
-  onCreateInvoice?: () => Promise<void>;
-  isCreating?: boolean;
 }
 
 // Default terms and conditions
@@ -59,9 +56,6 @@ export function InvoicePreviewModal({
   open,
   onOpenChange,
   invoiceData,
-  onShare,
-  onCreateInvoice,
-  isCreating = false,
 }: InvoicePreviewModalProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [businessProfile, setBusinessProfile] = useState({
@@ -123,62 +117,20 @@ export function InvoicePreviewModal({
       const pageWidth = doc.internal.pageSize.getWidth();
       let currentY = margin;
 
-      const logoDataUrl = await loadLogoAsDataUrl();
-      if (logoDataUrl) {
-        // Load image to get dimensions and maintain aspect ratio
-        const img = new Image();
-        await new Promise((resolve, reject) => {
-          img.onload = () => resolve(null);
-          img.onerror = reject;
-          img.src = logoDataUrl;
-        });
-        
-        // Calculate dimensions to fit in a square container (30x30mm) while maintaining aspect ratio
-        const containerSize = 30;
-        const imgAspect = img.width / img.height;
-        let logoWidth = containerSize;
-        let logoHeight = containerSize;
-        
-        if (imgAspect > 1) {
-          // Image is wider than tall - fit to width, center vertically
-          logoHeight = containerSize / imgAspect;
-        } else {
-          // Image is taller than wide or square - fit to height, center horizontally
-          logoWidth = containerSize * imgAspect;
-        }
-        
-        // Position logo at top left, centered within square container
-        const logoX = margin;
-        const logoY = currentY;
-        doc.addImage(logoDataUrl, "PNG", logoX, logoY, logoWidth, logoHeight);
-      }
+      // Set background color (beige)
+      doc.setFillColor(245, 245, 220);
+      doc.rect(0, 0, pageWidth, doc.internal.pageSize.getHeight(), "F");
 
-      const headerLeftX = margin + (logoDataUrl ? 40 : 0);
-
+      // INVOICE title - Large red letters on left
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text(businessProfile.name, headerLeftX, currentY + 10);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      if (businessProfile.address) {
-        const addressLines = businessProfile.address.split('\n').filter(line => line.trim());
-        addressLines.forEach((line, index) => {
-          doc.text(line, headerLeftX, currentY + 16 + (index * 5));
-        });
-        doc.text(`Phone: ${businessProfile.phone}`, headerLeftX, currentY + 16 + (addressLines.length * 5));
-        doc.text(businessProfile.email, headerLeftX, currentY + 16 + (addressLines.length * 5) + 5);
-      } else {
-        doc.text(`Phone: ${businessProfile.phone}`, headerLeftX, currentY + 16);
-        doc.text(businessProfile.email, headerLeftX, currentY + 21);
-      }
+      doc.setFontSize(48);
+      doc.setTextColor(197, 48, 50); // Red color
+      doc.text("INVOICE", margin, currentY + 20);
+      doc.setTextColor(0, 0, 0);
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(20);
-      doc.text("INVOICE", pageWidth - margin, currentY + 8, { align: "right" });
-
+      // Invoice details on left below INVOICE - date, time, and invoice ID
+      doc.setFont("courier", "normal");
       doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      // Show date, time, and invoice ID separately
       const invoiceDate = new Date(invoiceData.issueDate);
       const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -189,132 +141,176 @@ export function InvoicePreviewModal({
       const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
       const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceData.invoiceNumber;
       
-      doc.text(`Date: ${dateStr}`, pageWidth - margin, currentY + 18, { align: "right" });
-      doc.text(`Time: ${timeStr}`, pageWidth - margin, currentY + 25, { align: "right" });
+      doc.text(`DATE: ${dateStr.toUpperCase()}`, margin, currentY + 30);
+      doc.text(`TIME: ${timeStr.toUpperCase()}`, margin, currentY + 36);
       if (invoiceId) {
-        doc.text(`Invoice ID: ${invoiceId.toUpperCase()}`, pageWidth - margin, currentY + 32, { align: "right" });
+        doc.text(`INVOICE ID: ${invoiceId.toUpperCase()}`, margin, currentY + 42);
       }
 
-      currentY += 45;
+      // Logo and company address on right
+      let logoHeight = 30;
+      const logoDataUrl = await loadLogoAsDataUrl();
+      if (logoDataUrl) {
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+          img.onload = () => resolve(null);
+          img.onerror = reject;
+          img.src = logoDataUrl;
+        });
+        
+        const maxHeight = 30;
+        const aspectRatio = img.width / img.height;
+        logoHeight = maxHeight;
+        const logoWidth = logoHeight * aspectRatio;
+        
+        const logoX = pageWidth - margin - logoWidth;
+        doc.addImage(logoDataUrl, "PNG", logoX, currentY, logoWidth, logoHeight);
+      } else {
+        const logoSize = 30;
+        logoHeight = logoSize;
+        doc.setFillColor(100, 100, 100);
+        doc.rect(pageWidth - margin - logoSize, currentY, logoSize, logoSize, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(16);
+        doc.text("MW", pageWidth - margin - logoSize / 2, currentY + logoSize / 2 + 5, { align: "center" });
+        doc.setTextColor(0, 0, 0);
+      }
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text("BILL TO", margin, currentY);
-      doc.setFont("helvetica", "normal");
+      // Company address on right - below logo
+      const addressStartY = currentY + logoHeight + 5;
+      doc.setFont("courier", "normal");
       doc.setFontSize(10);
-      doc.text(invoiceData.customer.name, margin, currentY + 7);
+      if (businessProfile.address) {
+        const addressLines = businessProfile.address.split('\n').filter(line => line.trim());
+        addressLines.forEach((line, index) => {
+          doc.text(line.toUpperCase(), pageWidth - margin, addressStartY + (index * 6), { align: "right" });
+        });
+        doc.text(businessProfile.phone, pageWidth - margin, addressStartY + (addressLines.length * 6), { align: "right" });
+      } else {
+        doc.text(businessProfile.phone, pageWidth - margin, addressStartY, { align: "right" });
+      }
+
+      currentY += 50;
+
+      // Bill To and Payment Method - Two columns
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("Bill To:", margin, currentY);
+      doc.setFont("courier", "normal");
+      doc.setFontSize(10);
+      doc.text((invoiceData.customer.name || "N/A").toUpperCase(), margin, currentY + 6);
       if (invoiceData.customer.phone) {
         doc.text(invoiceData.customer.phone, margin, currentY + 12);
       }
       if (invoiceData.customer.email) {
-        doc.text(invoiceData.customer.email, margin, currentY + 17);
+        doc.text(invoiceData.customer.email, margin, currentY + 18);
       }
 
+      const paymentColumnX = pageWidth / 2;
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      const vehicleColumnX = pageWidth / 2;
-      doc.text("VEHICLE", vehicleColumnX, currentY);
-      doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
-      const vehicleYear = invoiceData.vehicle.year || "";
-      doc.text(
-        `${vehicleYear} ${invoiceData.vehicle.make} ${invoiceData.vehicle.model}`.trim(),
-        vehicleColumnX,
-        currentY + 7
-      );
-      // Reuse plateNo already declared above
-      if (plateNo) {
-        doc.text(`License Plate: ${plateNo}`, vehicleColumnX, currentY + 12);
-      }
+      doc.text("Payment Method", paymentColumnX, currentY);
+      doc.setFont("courier", "normal");
+      doc.setFontSize(10);
+      doc.text("CASH", paymentColumnX, currentY + 6); // Default to CASH for preview
       if (invoiceData.technician?.name) {
-        doc.text(`Assigned Technician: ${invoiceData.technician.name}`, vehicleColumnX, currentY + 17);
+        doc.text(invoiceData.technician.name.toUpperCase(), paymentColumnX, currentY + 12);
+      }
+      if (invoiceData.customer.phone) {
+        doc.text(invoiceData.customer.phone, paymentColumnX, currentY + 18);
       }
 
-      currentY += 32;
+      currentY += 30;
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text("Summary", margin, currentY);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.text(`Total Items: ${invoiceData.services.length}`, margin, currentY + 6);
-
-      currentY += 15;
-
+      // Table - Gray header
       autoTable(doc, {
         startY: currentY,
-        head: [["Description", "Qty", "Unit Price", "Line Total"]],
+        head: [["DESCRIPTION", "QTY", "PRICE", "SUBTOTAL"]],
         body: invoiceData.services.map((service) => {
           const amount = Number(service.estimatedCost) || 0;
           const quantity = service.quantity || 1;
           return [
-            service.name || "Service",
-            quantity.toString(),
-            formatCurrency(amount),
-            formatCurrency(amount * quantity),
+            (service.name || "Service").toUpperCase(),
+            quantity.toString().padStart(2, '0'),
+            `Rs${amount.toLocaleString('en-US')}`,
+            `Rs${(amount * quantity).toLocaleString('en-US')}`,
           ];
         }),
-        styles: { fontSize: 10, cellPadding: 4 },
-        headStyles: { fillColor: [197, 48, 50], textColor: 255, halign: "left" },
+        styles: { 
+          fontSize: 10, 
+          cellPadding: 4,
+          lineColor: [200, 200, 200],
+          lineWidth: 0.5,
+          font: "courier"
+        },
+        headStyles: { 
+          fillColor: [200, 200, 200], // Gray header
+          textColor: [0, 0, 0],
+          halign: "left",
+          fontStyle: "bold",
+          fontSize: 10,
+          font: "courier"
+        },
         columnStyles: {
+          0: { halign: "left", fontStyle: "bold" },
           1: { halign: "center" },
           2: { halign: "right" },
-          3: { halign: "right" },
+          3: { halign: "right", fontStyle: "bold" },
         },
-        alternateRowStyles: { fillColor: [248, 248, 248] },
+        alternateRowStyles: { fillColor: [255, 255, 255] },
+        theme: "plain",
       });
 
+      // Totals section
       const tableFinalY = (doc as any).lastAutoTable?.finalY ?? currentY + 20;
+      const summaryX = pageWidth - margin;
+      const summaryStartY = tableFinalY + 10;
+      const labelWidth = 40;
 
       const subtotal = invoiceData.subtotal || invoiceData.totalCost;
       const taxes = invoiceData.tax || 0;
       const discount = invoiceData.discount || 0;
       const grandTotal = subtotal + taxes - discount;
-      const summaryX = pageWidth - margin;
-
-      doc.setFont("helvetica", "normal");
+      
+      doc.setFont("courier", "bold");
       doc.setFontSize(10);
-      doc.text(`Subtotal: ${formatCurrency(subtotal)}`, summaryX, tableFinalY + 10, { align: "right" });
-      if (discount > 0) {
-        doc.text(`Discount: ${formatCurrency(discount)}`, summaryX, tableFinalY + 17, { align: "right" });
-      }
-      // Calculate tax rate percentage for display (assuming 16% GST if tax > 0)
-      const taxRatePercent = taxes > 0 && subtotal > 0 ? Math.round((taxes / subtotal) * 100) : 16;
-      doc.text(`GST (${taxRatePercent}%): ${formatCurrency(taxes)}`, summaryX, tableFinalY + (discount > 0 ? 24 : 17), { align: "right" });
-
-      doc.setFont("helvetica", "bold");
+      doc.text("TAX", summaryX - labelWidth, summaryStartY, { align: "right" });
+      doc.text(`Rs${Math.round(taxes).toLocaleString('en-US')}`, summaryX, summaryStartY, { align: "right" });
+      
+      doc.setFont("courier", "bold");
       doc.setFontSize(12);
-      doc.text(`Amount Due: ${formatCurrency(grandTotal)}`, summaryX, tableFinalY + (discount > 0 ? 35 : 28), { align: "right" });
+      doc.text("GRAND TOTAL", summaryX - labelWidth, summaryStartY + 8, { align: "right" });
+      doc.text(`Rs${Math.round(grandTotal).toLocaleString('en-US')}`, summaryX, summaryStartY + 8, { align: "right" });
 
       // Footer - Terms and Contact
-      const footerY = tableFinalY + (discount > 0 ? 53 : 46);
+      currentY = summaryStartY + 25;
       const footerLeftX = margin;
       const footerRightX = pageWidth - margin;
 
       // Terms & Conditions on left
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
-      doc.text("TERM & CONDITION", footerLeftX, footerY);
+      doc.text("TERM & CONDITION", footerLeftX, currentY);
       doc.setFont("courier", "normal");
       doc.setFontSize(8);
       const termsText = invoiceData.notes || DEFAULT_TERMS;
       doc.text(
         termsText,
         footerLeftX,
-        footerY + 6,
+        currentY + 6,
         { maxWidth: (pageWidth - margin * 2) / 2 }
       );
 
       // Contact info on right
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
-      doc.text("FOR ANY QUESTIONS, PLEASE CONTACT", footerRightX, footerY, { align: "right" });
+      doc.text("FOR ANY QUESTIONS, PLEASE CONTACT", footerRightX, currentY, { align: "right" });
       doc.setFont("courier", "normal");
       doc.setFontSize(10);
-      doc.text(businessProfile.email.toUpperCase(), footerRightX, footerY + 6, { align: "right" });
-      doc.text(`OR ${businessProfile.phone}.`, footerRightX, footerY + 12, { align: "right" });
+      doc.text(businessProfile.email.toUpperCase(), footerRightX, currentY + 6, { align: "right" });
+      doc.text(`OR ${businessProfile.phone}.`, footerRightX, currentY + 12, { align: "right" });
 
-      // Reuse invoiceId already declared above for PDF filename
       const finalInvoiceId = invoiceId || invoiceData.invoiceNumber;
       doc.save(`Invoice-${finalInvoiceId}.pdf`);
       toast.success("Invoice downloaded successfully");
@@ -339,17 +335,10 @@ export function InvoicePreviewModal({
         <head>
           <title>Invoice ${invoiceData.invoiceNumber}</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            .invoice-header { display: flex; justify-content: space-between; margin-bottom: 30px; }
-            .invoice-title { font-size: 32px; font-weight: bold; color: #c53032; }
-            .invoice-details { text-align: right; }
-            .section { margin-bottom: 20px; }
-            .section-title { font-weight: bold; margin-bottom: 10px; }
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-            th { background-color: #c53032; color: white; padding: 10px; text-align: left; }
-            td { padding: 8px; border-bottom: 1px solid #ddd; }
-            .total-section { text-align: right; margin-top: 20px; }
-            .total-amount { font-size: 18px; font-weight: bold; }
+            body { margin: 0; padding: 0; }
+            @media print {
+              body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            }
           </style>
         </head>
         <body>
@@ -373,63 +362,54 @@ export function InvoicePreviewModal({
     const vehicleYear = invoiceData.vehicle.year || "";
     const plateNo = invoiceData.vehicle.plateNo || invoiceData.vehicle.plate || "";
 
+    // Generate invoice ID
+    const customerName = invoiceData.customer?.name || '';
+    const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+    const invoiceId = plateNo && initials ? `${plateNo}-${initials}` : invoiceData.invoiceNumber;
+    const invoiceDate = new Date(invoiceData.issueDate);
+    const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
     return `
-      <div class="invoice-preview">
-        <div class="invoice-header">
+      <div class="invoice-preview" style="background-color: #f5f5dc; padding: 50px; font-family: 'Courier New', monospace; min-height: 297mm; box-sizing: border-box;">
+        <div class="invoice-header" style="display: flex; justify-content: space-between; margin-bottom: 40px;">
           <div class="invoice-header-left">
-            <h1 class="invoice-title">${businessProfile.name}</h1>
-            ${businessProfile.address ? `<p>${businessProfile.address.split('\n').join('</p><p>')}</p>` : ''}
-            <p>Phone: ${businessProfile.phone}</p>
-            <p>${businessProfile.email}</p>
+            <h1 style="font-size: 56px; font-weight: bold; color: #c53032; margin: 0 0 15px 0; font-family: Helvetica, Arial, sans-serif;">INVOICE</h1>
+            <p style="margin: 4px 0; font-size: 16px;">DATE: ${dateStr.toUpperCase()}</p>
+            <p style="margin: 4px 0; font-size: 16px;">TIME: ${timeStr.toUpperCase()}</p>
+            ${invoiceId ? `<p style="margin: 4px 0; font-size: 16px;">INVOICE ID: ${invoiceId.toUpperCase()}</p>` : ''}
           </div>
-          <div class="invoice-header-right">
-            <div class="invoice-details">
-              <h2>INVOICE</h2>
-              ${(() => {
-                const invoiceDate = new Date(invoiceData.issueDate);
-                const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-                const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                const plateNo = invoiceData.vehicle?.plateNo || invoiceData.vehicle?.plate || '';
-                const customerName = invoiceData.customer?.name || '';
-                const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-                const invoiceId = plateNo && initials ? `${plateNo}-${initials}` : '';
-                return `
-                  <p><strong>Date:</strong> ${dateStr}</p>
-                  <p><strong>Time:</strong> ${timeStr}</p>
-                  ${invoiceId ? `<p><strong>Invoice ID:</strong> ${invoiceId.toUpperCase()}</p>` : ''}
-                `;
-              })()}
+          <div class="invoice-header-right" style="text-align: right;">
+            <div style="margin-bottom: 15px;">
+              <img src="/1.png" alt="Logo" style="height: 80px; object-fit: contain;" onerror="this.style.display='none'" />
             </div>
+            ${businessProfile.address ? `<p style="margin: 4px 0; font-size: 15px;">${businessProfile.address.split('\n').map(l => l.toUpperCase()).join('</p><p style="margin: 4px 0; font-size: 15px;">')}</p>` : ''}
+            <p style="margin: 4px 0; font-size: 15px;">${businessProfile.phone}</p>
           </div>
         </div>
 
-        <div class="customer-vehicle-section">
-          <div class="section">
-            <div class="section-title">BILL TO</div>
-            <p>${invoiceData.customer.name}</p>
-            ${invoiceData.customer.phone ? `<p>${invoiceData.customer.phone}</p>` : ""}
-            ${invoiceData.customer.email ? `<p>${invoiceData.customer.email}</p>` : ""}
+        <div class="customer-payment-section" style="display: flex; justify-content: space-between; margin-bottom: 30px;">
+          <div class="section" style="flex: 1;">
+            <div style="font-weight: bold; font-size: 18px; font-family: Helvetica, Arial, sans-serif; margin-bottom: 8px;">Bill To:</div>
+            <p style="margin: 4px 0; font-size: 16px;">${invoiceData.customer.name.toUpperCase()}</p>
+            ${invoiceData.customer.phone ? `<p style="margin: 4px 0; font-size: 16px;">${invoiceData.customer.phone}</p>` : ""}
+            ${invoiceData.customer.email ? `<p style="margin: 4px 0; font-size: 16px;">${invoiceData.customer.email}</p>` : ""}
           </div>
-          <div class="section">
-            <div class="section-title">VEHICLE</div>
-            <p>${vehicleYear ? `${vehicleYear} ` : ""}${invoiceData.vehicle.make} ${invoiceData.vehicle.model}</p>
-            ${plateNo ? `<p>License Plate: ${plateNo}</p>` : ""}
-            ${invoiceData.technician?.name ? `<p>Assigned Technician: ${invoiceData.technician.name}</p>` : ""}
+          <div class="section" style="flex: 1;">
+            <div style="font-weight: bold; font-size: 18px; font-family: Helvetica, Arial, sans-serif; margin-bottom: 8px;">Payment Method</div>
+            <p style="margin: 4px 0; font-size: 16px;">CASH</p>
+            ${invoiceData.technician?.name ? `<p style="margin: 4px 0; font-size: 16px;">${invoiceData.technician.name.toUpperCase()}</p>` : ""}
+            ${invoiceData.customer.phone ? `<p style="margin: 4px 0; font-size: 16px;">${invoiceData.customer.phone}</p>` : ""}
           </div>
         </div>
 
-        <div class="summary-section">
-          <div class="section-title">Summary</div>
-          <p>Total Items: ${invoiceData.services.length}</p>
-        </div>
-
-      <table>
+      <table style="width: 100%; border-collapse: collapse; margin: 25px 0;">
         <thead>
           <tr>
-            <th>Description</th>
-            <th>Qty</th>
-            <th>Unit Price</th>
-            <th>Line Total</th>
+            <th style="background-color: #c8c8c8; color: #000; padding: 12px; text-align: left; font-size: 16px; font-weight: bold;">DESCRIPTION</th>
+            <th style="background-color: #c8c8c8; color: #000; padding: 12px; text-align: center; font-size: 16px; font-weight: bold;">QTY</th>
+            <th style="background-color: #c8c8c8; color: #000; padding: 12px; text-align: right; font-size: 16px; font-weight: bold;">PRICE</th>
+            <th style="background-color: #c8c8c8; color: #000; padding: 12px; text-align: right; font-size: 16px; font-weight: bold;">SUBTOTAL</th>
           </tr>
         </thead>
         <tbody>
@@ -437,255 +417,71 @@ export function InvoicePreviewModal({
             const amount = Number(service.estimatedCost) || 0;
             const quantity = service.quantity || 1;
             return `
-              <tr>
-                <td>${service.name || "Service"}</td>
-                <td>${quantity}</td>
-                <td>${formatCurrency(amount)}</td>
-                <td>${formatCurrency(amount * quantity)}</td>
+              <tr style="border-bottom: 1px solid #c8c8c8;">
+                <td style="padding: 12px; font-size: 15px; font-weight: bold;">${(service.name || "Service").toUpperCase()}</td>
+                <td style="padding: 12px; text-align: center; font-size: 15px;">${String(quantity).padStart(2, '0')}</td>
+                <td style="padding: 12px; text-align: right; font-size: 15px;">Rs${amount.toLocaleString('en-US')}</td>
+                <td style="padding: 12px; text-align: right; font-size: 15px; font-weight: bold;">Rs${(amount * quantity).toLocaleString('en-US')}</td>
               </tr>
             `;
           }).join("")}
         </tbody>
       </table>
 
-      <div class="total-section">
-        <p>Subtotal: ${formatCurrency(subtotal)}</p>
-        ${discount > 0 ? `<p>Discount: ${formatCurrency(discount)}</p>` : ""}
-        ${(() => {
-          const taxRatePercent = taxes > 0 && subtotal > 0 ? Math.round((taxes / subtotal) * 100) : 16;
-          return `<p>GST (${taxRatePercent}%): ${formatCurrency(taxes)}</p>`;
-        })()}
-        <p class="total-amount">Amount Due: ${formatCurrency(grandTotal)}</p>
+      <div class="total-section" style="text-align: right; margin-top: 30px;">
+        <p style="margin: 6px 0; font-size: 18px; font-weight: bold;">TAX <span style="margin-left: 50px;">Rs${Math.round(taxes).toLocaleString('en-US')}</span></p>
+        <p style="margin: 6px 0; font-size: 22px; font-weight: bold;">GRAND TOTAL <span style="margin-left: 50px;">Rs${Math.round(grandTotal).toLocaleString('en-US')}</span></p>
       </div>
 
-      <div style="margin-top: 40px; display: flex; justify-content: space-between; font-size: 12px; color: #666;">
+      <div style="margin-top: 50px; display: flex; justify-content: space-between; font-size: 14px;">
         <div style="flex: 1; max-width: 50%;">
-          <p style="font-weight: bold; margin-bottom: 8px;">TERM & CONDITION</p>
-          <p style="font-size: 10px; margin-bottom: 8px; white-space: pre-line;">${invoiceData.notes || DEFAULT_TERMS}</p>
+          <p style="font-weight: bold; margin-bottom: 12px; font-size: 16px; font-family: Helvetica, Arial, sans-serif;">TERM & CONDITION</p>
+          <p style="font-size: 14px; margin-bottom: 12px; white-space: pre-line;">${invoiceData.notes || DEFAULT_TERMS}</p>
         </div>
         <div style="flex: 1; max-width: 45%; text-align: right;">
-          <p style="font-weight: bold; margin-bottom: 8px;">FOR ANY QUESTIONS, PLEASE CONTACT</p>
-          <p style="font-size: 10px; margin-bottom: 4px;">${businessProfile.email.toUpperCase()}</p>
-          <p style="font-size: 10px;">OR ${businessProfile.phone}.</p>
+          <p style="font-weight: bold; margin-bottom: 12px; font-size: 16px; font-family: Helvetica, Arial, sans-serif;">FOR ANY QUESTIONS, PLEASE CONTACT</p>
+          <p style="font-size: 15px; margin-bottom: 6px;">${businessProfile.email.toUpperCase()}</p>
+          <p style="font-size: 15px;">OR ${businessProfile.phone}.</p>
         </div>
-      </div>
-      <div style="margin-top: 20px; font-size: 12px; color: #666; text-align: center;">
-        <p>Thank you for choosing ${businessProfile.name}!</p>
       </div>
     `;
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl max-h-[95vh] overflow-hidden flex flex-col p-0">
-        <DialogHeader className="px-6 py-4 border-b">
+      <DialogContent 
+        className="overflow-hidden flex flex-col p-0"
+        style={{
+          width: '95vw',
+          maxWidth: '900px',
+          height: '95vh',
+          maxHeight: '95vh',
+        }}
+      >
+        <DialogHeader className="px-6 py-3 border-b flex-shrink-0 bg-white">
           <DialogTitle>Invoice Preview</DialogTitle>
           <DialogDescription>
             Review your invoice before downloading or sharing
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-auto p-6 bg-slate-50">
+        <div className="flex-1 overflow-auto p-4 bg-slate-200 min-h-0">
           <div 
-            className="bg-white p-8 shadow-sm mx-auto"
+            className="shadow-lg mx-auto"
             style={{
-              fontFamily: 'Arial, sans-serif',
-              maxWidth: '800px',
-              width: '100%',
+              width: '210mm',
+              minHeight: '297mm',
+              maxWidth: '100%',
+              transform: 'scale(var(--preview-scale, 1))',
+              transformOrigin: 'top center',
             }}
             dangerouslySetInnerHTML={{ 
-              __html: `
-                <style>
-                  .invoice-preview { 
-                    font-family: Arial, sans-serif; 
-                    max-width: 800px;
-                    width: 100%;
-                    margin: 0 auto;
-                  }
-                  .invoice-header { 
-                    display: flex; 
-                    justify-content: space-between; 
-                    align-items: flex-start;
-                    margin-bottom: 30px; 
-                  }
-                  .invoice-header-left {
-                    flex: 1;
-                    max-width: 50%;
-                  }
-                  .invoice-header-right {
-                    text-align: right;
-                    flex-shrink: 0;
-                    max-width: 45%;
-                  }
-                  .invoice-title { 
-                    font-size: 24px; 
-                    font-weight: bold; 
-                    color: #c53032; 
-                    margin-bottom: 10px; 
-                  }
-                  .invoice-details { 
-                    text-align: right; 
-                  }
-                  .invoice-details h2 {
-                    font-size: 24px;
-                    font-weight: bold;
-                    color: #c53032;
-                    margin: 0 0 10px 0;
-                  }
-                  .invoice-details p {
-                    margin: 4px 0;
-                    font-size: 12px;
-                  }
-                  .customer-vehicle-section {
-                    display: flex;
-                    justify-content: space-between;
-                    margin-bottom: 30px;
-                    gap: 40px;
-                  }
-                  .section { 
-                    margin-bottom: 20px; 
-                    flex: 1;
-                    min-width: 0;
-                  }
-                  .section-title { 
-                    font-weight: bold; 
-                    margin-bottom: 10px; 
-                    font-size: 12px; 
-                    text-transform: uppercase;
-                  }
-                  .section p {
-                    margin: 4px 0;
-                    font-size: 12px;
-                  }
-                  .summary-section {
-                    margin-bottom: 20px;
-                  }
-                  .summary-section p {
-                    margin: 4px 0;
-                    font-size: 12px;
-                  }
-                  table { 
-                    width: 100%; 
-                    border-collapse: collapse; 
-                    margin: 20px 0; 
-                    table-layout: fixed;
-                  }
-                  table th:nth-child(1) { width: 50%; }
-                  table th:nth-child(2) { width: 15%; }
-                  table th:nth-child(3) { width: 17.5%; }
-                  table th:nth-child(4) { width: 17.5%; }
-                  th { 
-                    background-color: #c53032; 
-                    color: white; 
-                    padding: 12px; 
-                    text-align: left; 
-                    font-size: 12px; 
-                    font-weight: bold;
-                  }
-                  td { 
-                    padding: 10px 12px; 
-                    border-bottom: 1px solid #ddd; 
-                    font-size: 12px; 
-                    word-wrap: break-word;
-                  }
-                  td:nth-child(2),
-                  td:nth-child(3),
-                  td:nth-child(4) {
-                    text-align: right;
-                  }
-                  tbody tr:last-child td {
-                    border-bottom: none;
-                  }
-                  .total-section { 
-                    text-align: right; 
-                    margin-top: 20px; 
-                  }
-                  .total-section p {
-                    margin: 6px 0;
-                    font-size: 12px;
-                  }
-                  .total-amount { 
-                    font-size: 18px; 
-                    font-weight: bold; 
-                    color: #c53032;
-                    margin-top: 10px;
-                  }
-                  p { 
-                    margin: 4px 0; 
-                    font-size: 12px; 
-                  }
-                  .invoice-footer { 
-                    text-align: center; 
-                    margin-top: 40px; 
-                    font-size: 12px; 
-                    color: #666; 
-                  }
-                  .invoice-footer p {
-                    margin: 4px 0;
-                  }
-                </style>
-                ${generateInvoiceHTML()}
-              `
+              __html: generateInvoiceHTML()
             }} 
           />
         </div>
 
-        <div className="px-6 py-4 border-t bg-white flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            {onShare && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (invoiceData.customer.email) {
-                      const plateNo = invoiceData.vehicle?.plateNo || invoiceData.vehicle?.plate || '';
-                      const customerName = invoiceData.customer?.name || '';
-                      const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-                      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceData.invoiceNumber;
-                      const subject = encodeURIComponent(`Invoice ${invoiceId} - ${businessProfile.name}`);
-                      const body = encodeURIComponent(
-                        `Dear ${invoiceData.customer.name},\n\n` +
-                        `Please find attached invoice ${invoiceId} for your vehicle.\n\n` +
-                        `Invoice Details:\n` +
-                        `- Invoice ID: ${invoiceId}\n` +
-                        `- Date: ${invoiceData.issueDate}\n` +
-                        `- Total Amount: ${formatCurrency(invoiceData.totalCost)}\n\n` +
-                        `Thank you for choosing ${businessProfile.name}!\n\n` +
-                        `Best regards,\n${businessProfile.name} Team`
-                      );
-                      const mailtoUrl = `mailto:${invoiceData.customer.email}?subject=${subject}&body=${body}`;
-                      window.location.href = mailtoUrl;
-                    } else {
-                      toast.error("Customer email is not available");
-                    }
-                  }}
-                  disabled={!invoiceData.customer.email}
-                  className="flex-shrink-0"
-                >
-                  <Mail className="h-4 w-4 mr-2" />
-                  Share via Email
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    onShare('whatsapp');
-                    const plateNo = invoiceData.vehicle?.plateNo || invoiceData.vehicle?.plate || '';
-                    const customerName = invoiceData.customer?.name || '';
-                    const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-                    const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceData.invoiceNumber;
-                    const message = `Invoice ${invoiceId} - ${formatCurrency(invoiceData.totalCost)}`;
-                    const whatsappUrl = `https://wa.me/${invoiceData.customer.phone?.replace(/\D/g, '') || ''}?text=${encodeURIComponent(message)}`;
-                    window.open(whatsappUrl, '_blank');
-                  }}
-                  disabled={!invoiceData.customer.phone}
-                  className="flex-shrink-0"
-                >
-                  <MessageCircle className="h-4 w-4 mr-2" />
-                  Share via WhatsApp
-                </Button>
-              </>
-            )}
-          </div>
+        <div className="px-6 py-3 border-t bg-white flex items-center justify-end gap-2 flex-shrink-0">
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -712,29 +508,11 @@ export function InvoicePreviewModal({
                 </>
               )}
             </Button>
-            {onCreateInvoice && (
-              <Button
-                onClick={onCreateInvoice}
-                disabled={isCreating || isGenerating}
-                className="bg-green-600 hover:bg-green-700 text-white flex-shrink-0"
-              >
-                {isCreating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-4 w-4 mr-2" />
-                    Create Invoice
-                  </>
-                )}
-              </Button>
-            )}
           </div>
         </div>
       </DialogContent>
     </Dialog>
   );
 }
+
 

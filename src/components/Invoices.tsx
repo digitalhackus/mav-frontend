@@ -23,7 +23,9 @@ import {
   Loader2,
   Trash2,
   MoreVertical,
-  Edit
+  Edit,
+  Calendar,
+  X
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -39,6 +41,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./ui/popover";
+import { Label } from "./ui/label";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,13 +72,36 @@ const getDisplayStatus = (invoice: any): "Draft" | "Unpaid" | "Paid" => {
   }
   
   // If status is "Pending" and payment method is null/undefined, it's a Draft
-  // If paymentMethod is "Other", it's Unpaid (completed but not paid yet)
+  // Draft = user left before completing the invoice
   if (backendStatus === "Pending" && (invoice.paymentMethod === null || invoice.paymentMethod === undefined)) {
     return "Draft";
   }
   
-  // Otherwise it's Unpaid
+  // If paymentMethod is "Other", it's Unpaid (completed but payment not received yet)
+  // Otherwise it's Unpaid (has some payment method set but status is still Pending)
   return "Unpaid";
+};
+
+// Helper function to format payment method for display
+const getDisplayPaymentMethod = (invoice: any): string => {
+  const displayStatus = getDisplayStatus(invoice);
+  
+  // Draft: show N/A (no payment method selected)
+  if (displayStatus === "Draft") {
+    return "N/A";
+  }
+  
+  // Unpaid: show N/A (payment not received yet)
+  if (displayStatus === "Unpaid") {
+    return "N/A";
+  }
+  
+  // Paid: show the actual payment method
+  if (invoice.paymentMethod && invoice.paymentMethod !== "Other") {
+    return invoice.paymentMethod;
+  }
+  
+  return "N/A";
 };
 
 // Helper function to get backend status from display status for filtering
@@ -93,6 +124,9 @@ export function Invoices() {
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [invoiceToDelete, setInvoiceToDelete] = useState<any | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [dateFilterOpen, setDateFilterOpen] = useState(false);
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
 
   const fetchInvoices = async () => {
     try {
@@ -114,6 +148,28 @@ export function Invoices() {
           filteredInvoices = filteredInvoices.filter((invoice: any) => {
             const displayStatus = getDisplayStatus(invoice);
             return displayStatus === statusFilter;
+          });
+        }
+        
+        // Apply date filter client-side
+        if (startDate || endDate) {
+          filteredInvoices = filteredInvoices.filter((invoice: any) => {
+            const invoiceDate = new Date(invoice.date);
+            invoiceDate.setHours(0, 0, 0, 0);
+            
+            if (startDate) {
+              const start = new Date(startDate);
+              start.setHours(0, 0, 0, 0);
+              if (invoiceDate < start) return false;
+            }
+            
+            if (endDate) {
+              const end = new Date(endDate);
+              end.setHours(23, 59, 59, 999);
+              if (invoiceDate > end) return false;
+            }
+            
+            return true;
           });
         }
         
@@ -139,7 +195,7 @@ export function Invoices() {
     return () => {
       unsubscribe();
     };
-  }, [searchQuery, statusFilter, customerFilter]);
+  }, [searchQuery, statusFilter, customerFilter, startDate, endDate]);
 
   // Check for saved draft and auto-open create tab (only once on mount)
   useEffect(() => {
@@ -249,6 +305,50 @@ export function Invoices() {
     setInvoiceToDelete(null);
   };
 
+  const handleClearDateFilter = () => {
+    setStartDate("");
+    setEndDate("");
+    setDateFilterOpen(false);
+  };
+
+  const handleExportCSV = () => {
+    if (invoices.length === 0) {
+      toast.error("No invoices to export");
+      return;
+    }
+
+    // Create CSV content
+    const headers = ["Invoice ID", "Customer", "Make", "Model", "Year", "Date", "Services", "Payment Method", "Amount", "Status"];
+    const rows = invoices.map(invoice => [
+      formatInvoiceId(invoice),
+      invoice.customer?.name || 'N/A',
+      invoice.vehicle?.make || 'N/A',
+      invoice.vehicle?.model || 'N/A',
+      invoice.vehicle?.year || '',
+      new Date(invoice.date).toLocaleDateString(),
+      invoice.items?.length || 0,
+      getDisplayPaymentMethod(invoice),
+      invoice.amount || 0,
+      getDisplayStatus(invoice)
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(","))
+    ].join("\n");
+
+    // Create and download file
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `invoices_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("Invoices exported successfully");
+  };
 
   // Transform invoice data to match InvoiceDetail format
   const transformInvoiceForDetail = (invoice: any) => {
@@ -284,7 +384,7 @@ export function Invoices() {
       date: invoice.date ? new Date(invoice.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
       amount: invoice.amount || 0,
       status: invoice.status || 'Pending',
-      paymentMethod: invoice.paymentMethod || 'Cash',
+      paymentMethod: getDisplayPaymentMethod(invoice),
       services: invoice.items?.length || 0,
       items: transformedItems,
       technician: invoice.technician,
@@ -463,25 +563,103 @@ export function Invoices() {
                   </SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="outline" size="sm" className="flex-1 lg:flex-none">
-                <Filter className="h-4 w-4 lg:mr-2" />
-                <span className="hidden lg:inline">Filter by Date</span>
-              </Button>
+              <Popover open={dateFilterOpen} onOpenChange={setDateFilterOpen}>
+                <PopoverTrigger asChild>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className={`flex-1 lg:flex-none ${(startDate || endDate) ? 'border-[#c53032] text-[#c53032]' : ''}`}
+                  >
+                    <Calendar className="h-4 w-4 lg:mr-2" />
+                    <span className="hidden lg:inline">
+                      {startDate || endDate ? 'Date Filtered' : 'Filter by Date'}
+                    </span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80" align="end">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium">Filter by Date</h4>
+                      {(startDate || endDate) && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={handleClearDateFilter}
+                          className="h-6 px-2 text-xs text-gray-500"
+                        >
+                          <X className="h-3 w-3 mr-1" />
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="startDate">From</Label>
+                      <Input
+                        id="startDate"
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="endDate">To</Label>
+                      <Input
+                        id="endDate"
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        className="w-full"
+                      />
+                    </div>
+                    <Button 
+                      className="w-full bg-[#c53032] hover:bg-[#a82628]" 
+                      onClick={() => setDateFilterOpen(false)}
+                    >
+                      Apply Filter
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
-          {customerFilter && (
-            <div className="mt-3 flex items-center gap-2">
-              <Badge className="bg-blue-100 text-blue-700 border-blue-200">
-                Filtered by Customer
-              </Badge>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setCustomerFilter("")}
-                className="h-6 px-2 text-xs"
-              >
-                Clear
-              </Button>
+          {(customerFilter || startDate || endDate) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {customerFilter && (
+                <>
+                  <Badge className="bg-blue-100 text-blue-700 border-blue-200">
+                    Filtered by Customer
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCustomerFilter("")}
+                    className="h-6 px-2 text-xs"
+                  >
+                    Clear
+                  </Button>
+                </>
+              )}
+              {(startDate || endDate) && (
+                <>
+                  <Badge className="bg-purple-100 text-purple-700 border-purple-200">
+                    {startDate && endDate 
+                      ? `${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()}`
+                      : startDate 
+                        ? `From ${new Date(startDate).toLocaleDateString()}`
+                        : `Until ${new Date(endDate).toLocaleDateString()}`
+                    }
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleClearDateFilter}
+                    className="h-6 px-2 text-xs"
+                  >
+                    Clear Date
+                  </Button>
+                </>
+              )}
             </div>
           )}
         </CardContent>
@@ -492,7 +670,7 @@ export function Invoices() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>All Invoices</CardTitle>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={handleExportCSV}>
               <Download className="h-4 w-4 lg:mr-2" />
               <span className="hidden lg:inline">Export</span>
             </Button>
@@ -541,7 +719,7 @@ export function Invoices() {
 
                     <div className="space-y-1 text-sm">
                       <p className="text-gray-600">{invoice.vehicle?.make} {invoice.vehicle?.model} {invoice.vehicle?.year}</p>
-                      <p className="text-gray-500">{new Date(invoice.date).toLocaleDateString()} • {invoice.paymentMethod || 'N/A'}</p>
+                      <p className="text-gray-500">{new Date(invoice.date).toLocaleDateString()} • {getDisplayPaymentMethod(invoice)}</p>
                       <p><Badge variant="outline">{invoice.items?.length || 0} items</Badge></p>
                     </div>
 
@@ -610,7 +788,7 @@ export function Invoices() {
                   <TableCell>
                     <Badge variant="outline">{invoice.items?.length || 0} items</Badge>
                   </TableCell>
-                  <TableCell>{invoice.paymentMethod || 'N/A'}</TableCell>
+                  <TableCell>{getDisplayPaymentMethod(invoice)}</TableCell>
                   <TableCell className="font-medium">
                     <span className="text-sm font-normal mr-0.5">₨</span>
                     <span>{invoice.amount?.toLocaleString() || 0}</span>

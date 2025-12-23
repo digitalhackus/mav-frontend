@@ -34,6 +34,8 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { notificationsAPI, customersAPI, vehiclesAPI } from "../api/client";
+import { toast } from "sonner";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 
 export function Notifications() {
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,7 @@ export function Notifications() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [sendingNotification, setSendingNotification] = useState<string | null>(null);
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   
   // Custom notification dialog state
   const [isCustomDialogOpen, setIsCustomDialogOpen] = useState(false);
@@ -130,7 +133,7 @@ export function Notifications() {
 
   const handleSendCustomNotification = async () => {
     if (!customNotification.customerId || !customNotification.title || !customNotification.message) {
-      alert("Please fill in all required fields");
+      toast.error("Please fill in all required fields");
       return;
     }
 
@@ -145,7 +148,7 @@ export function Notifications() {
       );
 
       if (response.success) {
-        alert("Custom notification sent successfully!");
+        toast.success("Custom notification sent successfully!");
         setIsCustomDialogOpen(false);
         setCustomNotification({
           customerId: "",
@@ -157,10 +160,10 @@ export function Notifications() {
         setVehicles([]);
         fetchNotifications();
       } else {
-        alert(response.message || "Failed to send custom notification");
+        toast.error(response.message || "Failed to send custom notification");
       }
     } catch (err: any) {
-      alert(err.message || "Failed to send custom notification");
+      toast.error(err.message || "Failed to send custom notification");
     } finally {
       setSendingCustom(false);
     }
@@ -209,7 +212,7 @@ export function Notifications() {
 
   const handleSendEmail = async (notification: any) => {
     if (!notification.customerId || !notification.vehicleId) {
-      alert('Missing customer or vehicle information');
+      toast.error('Missing customer or vehicle information');
       return;
     }
 
@@ -222,13 +225,14 @@ export function Notifications() {
       );
       
       if (response.success) {
+        toast.success('Email sent successfully!');
         // Refresh notifications
         await fetchNotifications();
       } else {
-        alert(response.message || 'Failed to send email');
+        toast.error(response.message || 'Failed to send email');
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to send email');
+      toast.error(err.message || 'Failed to send email');
     } finally {
       setSendingNotification(null);
     }
@@ -236,7 +240,7 @@ export function Notifications() {
 
   const handleSendWhatsApp = async (notification: any) => {
     if (!notification.customerId || !notification.vehicleId) {
-      alert('Missing customer or vehicle information');
+      toast.error('Missing customer or vehicle information');
       return;
     }
 
@@ -249,20 +253,28 @@ export function Notifications() {
       );
       
       if (response.success) {
+        toast.success('WhatsApp message sent successfully!');
         // Refresh notifications
         await fetchNotifications();
       } else {
-        alert(response.message || 'Failed to send WhatsApp message');
+        toast.error(response.message || 'Failed to send WhatsApp message');
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to send WhatsApp message');
+      toast.error(err.message || 'Failed to send WhatsApp message');
     } finally {
       setSendingNotification(null);
     }
   };
 
   const handleBulkSend = async (type: 'all' | 'overdue' | 'due_soon', method: 'email' | 'whatsapp' | 'both') => {
-    if (!confirm(`Are you sure you want to send ${method} notifications to ${type === 'all' ? 'all' : type === 'overdue' ? 'overdue' : 'due soon'} customers?`)) {
+    const confirmed = await confirm({
+      title: "Confirm Bulk Send",
+      description: `Are you sure you want to send ${method} notifications to ${type === 'all' ? 'all' : type === 'overdue' ? 'overdue' : 'due soon'} customers?`,
+      confirmText: "Send",
+      cancelText: "Cancel",
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -270,13 +282,13 @@ export function Notifications() {
     try {
       const response = await notificationsAPI.sendBulk(type, method);
       if (response.success) {
-        alert(response.message);
+        toast.success(response.message || 'Bulk notifications sent successfully!');
         await fetchNotifications();
       } else {
-        alert(response.message || 'Failed to send bulk notifications');
+        toast.error(response.message || 'Failed to send bulk notifications');
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to send bulk notifications');
+      toast.error(err.message || 'Failed to send bulk notifications');
     } finally {
       setLoading(false);
     }
@@ -754,6 +766,8 @@ export function Notifications() {
         </CardContent>
       </Card>
 
+      {/* Confirm Dialog */}
+      <ConfirmDialog />
     </div>
   );
 }

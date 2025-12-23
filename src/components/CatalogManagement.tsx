@@ -32,6 +32,7 @@ import { Checkbox } from "./ui/checkbox";
 import { Plus, Edit, Trash2, Wrench, Package, Loader2, X } from "lucide-react";
 import { catalogAPI, inventoryAPI } from "../api/client";
 import { toast } from "sonner";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 
 interface SubOption {
   key: string;
@@ -71,6 +72,7 @@ interface InventoryItem {
 }
 
 export function CatalogManagement() {
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<CatalogItem[]>([]);
   const [products, setProducts] = useState<CatalogItem[]>([]);
@@ -266,7 +268,15 @@ export function CatalogManagement() {
   };
 
   const handleDelete = async (item: CatalogItem) => {
-    if (!confirm(`Are you sure you want to delete "${item.name}"?`)) {
+    const confirmed = await confirm({
+      title: "Delete Catalog Item",
+      description: `Are you sure you want to delete "${item.name}"? This action cannot be undone.`,
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      variant: "destructive",
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -857,6 +867,9 @@ export function CatalogManagement() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Confirm Dialog */}
+      <ConfirmDialog />
     </div>
   );
 }

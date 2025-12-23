@@ -30,6 +30,7 @@ import { Plus, Edit, Trash2, Package, Loader2, AlertTriangle } from "lucide-reac
 import { inventoryAPI, catalogAPI } from "../api/client";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 
 interface InventoryItem {
   _id?: string;
@@ -49,6 +50,7 @@ interface InventoryItem {
 export function Inventory() {
   const { user } = useAuth();
   const isAdmin = user?.role === "Admin" || user?.role === "admin";
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -224,7 +226,15 @@ export function Inventory() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this inventory item?")) {
+    const confirmed = await confirm({
+      title: "Delete Inventory Item",
+      description: "Are you sure you want to delete this inventory item? This action cannot be undone.",
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      variant: "destructive",
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -532,6 +542,9 @@ export function Inventory() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Confirm Dialog */}
+      <ConfirmDialog />
     </div>
   );
 }

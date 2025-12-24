@@ -45,6 +45,8 @@ interface InvoicePreviewModalProps {
     subtotal?: number;
     tax?: number;
     discount?: number;
+    discountType?: "percent" | "fixed";
+    discountPercent?: number;
     notes?: string;
   };
 }
@@ -273,18 +275,32 @@ export function InvoicePreviewModal({
       const discount = invoiceData.discount || 0;
       const grandTotal = subtotal + taxes - discount;
       
+      let currentSummaryY = summaryStartY;
+      
+      // Discount (if any)
+      if (discount > 0) {
+        doc.setFont("courier", "bold");
+        doc.setFontSize(10);
+        const discountLabel = invoiceData.discountType === "percent" && invoiceData.discountPercent 
+          ? `DISCOUNT (${invoiceData.discountPercent}%)` 
+          : "DISCOUNT";
+        doc.text(discountLabel, summaryX - labelWidth, currentSummaryY, { align: "right" });
+        doc.text(`-Rs${Math.round(discount).toLocaleString('en-US')}`, summaryX, currentSummaryY, { align: "right" });
+        currentSummaryY += 8;
+      }
+      
       doc.setFont("courier", "bold");
       doc.setFontSize(10);
-      doc.text("TAX", summaryX - labelWidth, summaryStartY, { align: "right" });
-      doc.text(`Rs${Math.round(taxes).toLocaleString('en-US')}`, summaryX, summaryStartY, { align: "right" });
+      doc.text("TAX", summaryX - labelWidth, currentSummaryY, { align: "right" });
+      doc.text(`Rs${Math.round(taxes).toLocaleString('en-US')}`, summaryX, currentSummaryY, { align: "right" });
       
       doc.setFont("courier", "bold");
       doc.setFontSize(12);
-      doc.text("GRAND TOTAL", summaryX - labelWidth, summaryStartY + 8, { align: "right" });
-      doc.text(`Rs${Math.round(grandTotal).toLocaleString('en-US')}`, summaryX, summaryStartY + 8, { align: "right" });
+      doc.text("GRAND TOTAL", summaryX - labelWidth, currentSummaryY + 8, { align: "right" });
+      doc.text(`Rs${Math.round(grandTotal).toLocaleString('en-US')}`, summaryX, currentSummaryY + 8, { align: "right" });
 
       // Footer - Terms and Contact
-      currentY = summaryStartY + 25;
+      currentY = currentSummaryY + 25;
       const footerLeftX = margin;
       const footerRightX = pageWidth - margin;
 
@@ -429,6 +445,7 @@ export function InvoicePreviewModal({
       </table>
 
       <div class="total-section" style="text-align: right; margin-top: 30px;">
+        ${discount > 0 ? `<p style="margin: 6px 0; font-size: 18px; font-weight: bold;">${invoiceData.discountType === "percent" && invoiceData.discountPercent ? `DISCOUNT (${invoiceData.discountPercent}%)` : "DISCOUNT"} <span style="margin-left: 50px;">-Rs${Math.round(discount).toLocaleString('en-US')}</span></p>` : ''}
         <p style="margin: 6px 0; font-size: 18px; font-weight: bold;">TAX <span style="margin-left: 50px;">Rs${Math.round(taxes).toLocaleString('en-US')}</span></p>
         <p style="margin: 6px 0; font-size: 22px; font-weight: bold;">GRAND TOTAL <span style="margin-left: 50px;">Rs${Math.round(grandTotal).toLocaleString('en-US')}</span></p>
       </div>

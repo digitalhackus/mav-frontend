@@ -142,16 +142,7 @@ function AppLayout() {
         />
         <Route 
           path="/create-invoice" 
-          element={
-            <AddInvoice
-              onClose={() => navigate("/dashboard")}
-              onSubmit={(data) => {
-                console.log("Invoice created:", data);
-                navigate("/invoices");
-              }}
-              userRole={user?.role || "Admin"}
-            />
-          } 
+          element={<Navigate to="/invoices?tab=create" replace />} 
         />
         <Route 
           path="/inventory" 

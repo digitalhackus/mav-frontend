@@ -227,7 +227,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
             variant="outline"
             className="w-full sm:w-auto lg:flex-none"
             size="sm"
-            onClick={() => onNavigate && onNavigate("create-invoice")}
+            onClick={() => onNavigate && onNavigate("invoices?tab=create")}
           >
             <NotebookPen className="h-4 w-4 lg:mr-2" />
             <span className="hidden lg:inline">Create Invoice</span>

@@ -463,8 +463,17 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       // Totals section - Right aligned, monospace with proper formatting
       const tableFinalY = (doc as any).lastAutoTable?.finalY ?? currentY + 20;
       const summaryX = pageWidth - margin;
-      const summaryStartY = tableFinalY + 10;
+      let summaryStartY = tableFinalY + 10;
       const labelWidth = 40;
+      
+      // Discount (if any)
+      if (discount > 0) {
+        doc.setFont("courier", "bold");
+        doc.setFontSize(10);
+        doc.text("DISCOUNT", summaryX - labelWidth, summaryStartY, { align: "right" });
+        doc.text(`-Rs${Math.round(discount).toLocaleString('en-US')}`, summaryX, summaryStartY, { align: "right" });
+        summaryStartY += 8;
+      }
       
       doc.setFont("courier", "bold");
       doc.setFontSize(10);
@@ -841,6 +850,12 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                       <div className="w-full lg:w-96">
                         <table className="w-full" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           <tbody>
+                            {discount > 0 && (
+                              <tr>
+                                <td className="text-left py-3 text-lg font-bold text-green-600">DISCOUNT</td>
+                                <td className="text-right py-3 text-lg font-bold text-green-600">-Rs{Math.round(discount).toLocaleString('en-US')}</td>
+                              </tr>
+                            )}
                             <tr>
                               <td className="text-left py-3 text-lg font-bold text-slate-900">TAX</td>
                               <td className="text-right py-3 text-lg font-bold text-slate-900">Rs{Math.round(taxAmount).toLocaleString('en-US')}</td>
@@ -1201,6 +1216,12 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
               <div className="w-full lg:w-96">
                 <table className="w-full" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   <tbody>
+                    {discount > 0 && (
+                      <tr>
+                        <td className="text-left py-3 text-lg font-bold text-green-600">DISCOUNT</td>
+                        <td className="text-right py-3 text-lg font-bold text-green-600">-Rs{Math.round(discount).toLocaleString()}</td>
+                      </tr>
+                    )}
                     <tr>
                       <td className="text-left py-3 text-lg font-bold text-slate-900">TAX</td>
                       <td className="text-right py-3 text-lg font-bold text-slate-900">Rs{Math.round(taxAmount).toLocaleString()}</td>
@@ -1211,8 +1232,8 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                     </tr>
                   </tbody>
                 </table>
-                </div>
               </div>
+            </div>
 
 
             {/* Footer - TERM & CONDITION and Contact Info */}

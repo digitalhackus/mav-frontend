@@ -1050,6 +1050,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     // (customer and vehicle are already selected, so step navigation is not needed)
     if (editingInvoiceId) {
       // When editing, clicking back should close or go to invoices list
+      sessionStorage.removeItem('editingInvoiceId');
       if (onClose) {
         onClose();
       } else {
@@ -1058,12 +1059,17 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       return;
     }
     
-    // Normal flow when creating new invoice
+    // Normal flow when creating new invoice - go back one step
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
-    } else if (onClose) {
-      // If on step 1, close the dialog
-      onClose();
+    } else {
+      // If on step 1, close/exit the invoice creation
+      sessionStorage.removeItem('editingInvoiceId');
+      if (onClose) {
+        onClose();
+      } else {
+        navigate("/invoices");
+      }
     }
   };
 
@@ -1270,8 +1276,18 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       // Totals section - Right aligned, monospace with proper formatting
       const tableFinalY = (doc as any).lastAutoTable?.finalY ?? currentY + 20;
       const summaryX = pageWidth - margin;
-      const summaryStartY = tableFinalY + 10;
+      let summaryStartY = tableFinalY + 10;
       const labelWidth = 40;
+      
+      // Discount (if any)
+      if (discountAmount > 0) {
+        doc.setFont("courier", "bold");
+        doc.setFontSize(10);
+        const discountLabel = discountType === "percent" ? `DISCOUNT (${discount}%)` : "DISCOUNT";
+        doc.text(discountLabel, summaryX - labelWidth, summaryStartY, { align: "right" });
+        doc.text(`-Rs${Math.round(discountAmount).toLocaleString('en-US')}`, summaryX, summaryStartY, { align: "right" });
+        summaryStartY += 8;
+      }
       
       doc.setFont("courier", "bold");
       doc.setFontSize(10);
@@ -1503,8 +1519,18 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       // Totals section - Right aligned, monospace with proper formatting
       const tableFinalY = (doc as any).lastAutoTable?.finalY ?? currentY + 20;
       const summaryX = pageWidth - margin;
-      const summaryStartY = tableFinalY + 10;
+      let summaryStartY = tableFinalY + 10;
       const labelWidth = 40;
+      
+      // Discount (if any)
+      if (discountAmount > 0) {
+        doc.setFont("courier", "bold");
+        doc.setFontSize(10);
+        const discountLabel = discountType === "percent" ? `DISCOUNT (${discount}%)` : "DISCOUNT";
+        doc.text(discountLabel, summaryX - labelWidth, summaryStartY, { align: "right" });
+        doc.text(`-Rs${Math.round(discountAmount).toLocaleString('en-US')}`, summaryX, summaryStartY, { align: "right" });
+        summaryStartY += 8;
+      }
       
       doc.setFont("courier", "bold");
       doc.setFontSize(10);
@@ -1742,9 +1768,21 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
             setDraftInvoiceId(existingDraftId);
           }
           console.log('Draft invoice updated:', existingDraftId);
-          // Don't reset form - keep the user on the same step with their data
-          // Clear localStorage draft since it's saved to database
-          localStorage.removeItem(DRAFT_KEY);
+          // Keep draft ID in localStorage so it can be restored on page reload
+          const draftData = {
+            selectedCustomerId,
+            selectedVehicleId,
+            items,
+            discount,
+            discountType,
+            paymentMethod,
+            notes,
+            invoiceStatus,
+            currentStep,
+            draftInvoiceId: existingDraftId,
+            timestamp: Date.now()
+          };
+          localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
         }
       } else {
         // Only create new draft if one doesn't exist
@@ -1754,9 +1792,21 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
           setDraftInvoiceId(newDraftId);
           (window as any).__currentDraftInvoiceId = newDraftId;
           console.log('Draft invoice created:', newDraftId);
-          // Don't reset form - keep the user on the same step with their data
-          // Clear localStorage draft since it's saved to database
-          localStorage.removeItem(DRAFT_KEY);
+          // Save draft ID to localStorage so it can be restored on page reload
+          const draftData = {
+            selectedCustomerId,
+            selectedVehicleId,
+            items,
+            discount,
+            discountType,
+            paymentMethod,
+            notes,
+            invoiceStatus,
+            currentStep,
+            draftInvoiceId: newDraftId,
+            timestamp: Date.now()
+          };
+          localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
         }
       }
     } catch (error: any) {
@@ -1865,13 +1915,16 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       // Then, create or update the invoice in the database
       const invoicePayload = buildInvoicePayload();
       
+      // Check for existing draft ID (from state or window reference)
+      const existingDraftId = draftInvoiceId || (window as any).__currentDraftInvoiceId;
+      
       let response;
       if (editingInvoiceId) {
         // Update existing invoice
         response = await invoicesAPI.update(editingInvoiceId, invoicePayload);
-      } else if (draftInvoiceId) {
-        // Update existing draft invoice
-        response = await invoicesAPI.update(draftInvoiceId, invoicePayload);
+      } else if (existingDraftId) {
+        // Update existing draft invoice (convert draft to real invoice)
+        response = await invoicesAPI.update(existingDraftId, invoicePayload);
       } else {
         // Create new invoice
         response = await invoicesAPI.create(invoicePayload);
@@ -1892,7 +1945,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
           setEditingInvoiceId(null);
         }
         // Clear draft invoice ID (if it was a draft that got completed)
-        if (draftInvoiceId && !editingInvoiceId) {
+        if (existingDraftId && !editingInvoiceId) {
           setDraftInvoiceId(null);
           (window as any).__currentDraftInvoiceId = null;
         }
@@ -2086,14 +2139,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       <div className="px-6 py-5 flex items-center justify-between border-b shrink-0 bg-[#c53032] text-white">
         <div className="flex items-center gap-3">
           <button 
-            onClick={() => {
-              sessionStorage.removeItem('editingInvoiceId');
-              if (onClose) {
-                onClose();
-              } else {
-                navigate("/dashboard");
-              }
-            }}
+            onClick={handleBack}
             className="w-10 h-10 rounded-lg hover:bg-white/10 flex items-center justify-center transition-colors mr-1"
           >
             <ChevronLeft className="h-5 w-5 text-white" />
@@ -2586,9 +2632,10 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                             <Input
                               type="number"
                               min="1"
-                              value={item.quantity}
+                              value={item.quantity || ''}
                               onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 1)}
                               className="text-center"
+                              placeholder="1"
                             />
                           </div>
                           <div className="col-span-2">
@@ -2597,9 +2644,10 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                               type="number"
                               min="0"
                               step="0.01"
-                              value={item.price}
+                              value={item.price || ''}
                               onChange={(e) => updateItem(item.id, 'price', parseFloat(e.target.value) || 0)}
                               className="text-right"
+                              placeholder="0"
                               disabled={!canEditPricing}
                             />
                           </div>
@@ -2636,6 +2684,17 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                                 {subtotal.toLocaleString()}
                               </span>
                             </div>
+                            {discountAmount > 0 && (
+                              <div className="flex justify-between items-center py-2 border-b border-slate-200">
+                                <span className="text-sm font-medium text-green-600">
+                                  Discount {discountType === "percent" ? `(${discount}%)` : "(Fixed)"}:
+                                </span>
+                                <span className="text-sm font-semibold text-green-600">
+                                  -<span className="text-xs font-normal mr-0.5">₨</span>
+                                  {discountAmount.toLocaleString()}
+                                </span>
+                              </div>
+                            )}
                             <div className="flex justify-end py-1.5">
                               <span className="text-base font-semibold text-slate-800">Exclusive of tax</span>
                             </div>
@@ -2739,7 +2798,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                     <Input
                       type="number"
                       min="0"
-                      value={discount}
+                      value={discount || ''}
                       onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
                       placeholder="0"
                       disabled={!canEditPricing}
@@ -3238,6 +3297,8 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
             subtotal: subtotal,
             tax: tax,
             discount: discountAmount,
+            discountType: discountType,
+            discountPercent: discountType === "percent" ? discount : undefined,
             notes: notes,
           }}
         />

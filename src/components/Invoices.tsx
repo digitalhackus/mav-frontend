@@ -224,6 +224,19 @@ export function Invoices() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Check for tab parameter in URL (e.g., from Dashboard "Create Invoice" button)
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'create') {
+      setActiveTab('create');
+      // Clean up URL param after setting tab
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('tab');
+      setSearchParams(newParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // Check for customer filter in URL params
   useEffect(() => {
     const customerId = searchParams.get('customer');

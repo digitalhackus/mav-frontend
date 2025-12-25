@@ -141,47 +141,18 @@ export function VehicleProfile({
     }
 
     try {
-      // Show a dialog to choose email, WhatsApp, or both
-      const method = window.confirm(
-        "Choose notification method:\n\nOK = Send Email\nCancel = Send WhatsApp\n\n(Both will be sent)"
-      ) ? 'email' : 'whatsapp';
-
-      // Send both email and WhatsApp for better coverage
-      const promises = [];
+      toast.loading("Sending service reminder...", { id: "reminder" });
       
-      // Try email
-      try {
-        promises.push(
-          notificationsAPI.sendEmail(vehicle.ownerId, vehicle.id)
-            .then(res => ({ type: 'email', success: res.success, message: res.message }))
-            .catch(err => ({ type: 'email', success: false, message: err.message }))
-        );
-      } catch (err: any) {
-        console.error("Email send error:", err);
-      }
-
-      // Try WhatsApp
-      try {
-        promises.push(
-          notificationsAPI.sendWhatsApp(vehicle.ownerId, vehicle.id)
-            .then(res => ({ type: 'whatsapp', success: res.success, message: res.message }))
-            .catch(err => ({ type: 'whatsapp', success: false, message: err.message }))
-        );
-      } catch (err: any) {
-        console.error("WhatsApp send error:", err);
-      }
-
-      const results = await Promise.all(promises);
-      const successCount = results.filter(r => r.success).length;
+      const result = await notificationsAPI.sendEmail(vehicle.ownerId, vehicle.id);
       
-      if (successCount > 0) {
-        toast.success(`Service reminder sent successfully (${successCount} method${successCount > 1 ? 's' : ''})`);
+      if (result.success) {
+        toast.success("Service reminder sent successfully via email!", { id: "reminder" });
       } else {
-        toast.error("Failed to send reminder. Please check customer contact information.");
+        toast.error(result.message || "Failed to send reminder. Please check customer email.", { id: "reminder" });
       }
     } catch (error: any) {
       console.error("Error sending reminder:", error);
-      toast.error(error.message || "Failed to send service reminder");
+      toast.error(error.message || "Failed to send service reminder", { id: "reminder" });
     }
   };
 

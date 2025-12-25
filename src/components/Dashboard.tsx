@@ -75,7 +75,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
       
       // Request data based on selected date range
       const [summaryData, jobsData, dailyPerformanceData] = await Promise.all([
-        dashboardAPI.getSummary(),
+        dashboardAPI.getSummary(dateRange),
         jobsAPI.getAll(),
         reportsAPI.getDailyPerformance(dateRange) // Get data for selected date range
       ]);
@@ -317,7 +317,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
             onClick={() => onNavigate && onNavigate("reports?period=week")}
           >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm text-gray-600">Weekly Revenue</CardTitle>
+              <CardTitle className="text-sm text-gray-600">Revenue</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
                 <Coins className="h-5 w-5 text-[#c53032]" />
               </div>
@@ -325,11 +325,11 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
             <CardContent>
               <div className="text-3xl mb-1">
                 <span className="text-lg font-normal mr-1" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', letterSpacing: '0.02em' }}>Rs</span>
-                <span className="font-semibold">{summary?.todayRevenue?.toLocaleString() || 0}</span>
+                <span className="font-semibold">{summary?.periodRevenue?.toLocaleString() || 0}</span>
               </div>
               <div className="flex items-center text-sm text-[#c53032]">
                 <ArrowUpRight className="h-4 w-4 mr-1" />
-                <span>Today's revenue</span>
+                <span>Last {dateRange} days</span>
               </div>
             </CardContent>
           </Card>
@@ -376,7 +376,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl mb-1">{summary?.jobsByStatus?.COMPLETED || 0}</div>
+              <div className="text-3xl mb-1">{summary?.completedToday || 0}</div>
               <div className="flex items-center text-sm text-[#e15b5b]">
                 <TrendingUp className="h-4 w-4 mr-1" />
                 <span>Completed jobs</span>

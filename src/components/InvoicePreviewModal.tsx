@@ -48,6 +48,7 @@ interface InvoicePreviewModalProps {
     discountType?: "percent" | "fixed";
     discountPercent?: number;
     notes?: string;
+    terms?: string;
   };
 }
 
@@ -304,13 +305,29 @@ export function InvoicePreviewModal({
       const footerLeftX = margin;
       const footerRightX = pageWidth - margin;
 
+      // Notes section (if any)
+      if (invoiceData.notes) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("NOTES", footerLeftX, currentY);
+        doc.setFont("courier", "normal");
+        doc.setFontSize(8);
+        doc.text(
+          invoiceData.notes,
+          footerLeftX,
+          currentY + 6,
+          { maxWidth: (pageWidth - margin * 2) / 2 }
+        );
+        currentY += 20;
+      }
+
       // Terms & Conditions on left
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.text("TERM & CONDITION", footerLeftX, currentY);
       doc.setFont("courier", "normal");
       doc.setFontSize(8);
-      const termsText = invoiceData.notes || DEFAULT_TERMS;
+      const termsText = invoiceData.terms || DEFAULT_TERMS;
       doc.text(
         termsText,
         footerLeftX,
@@ -452,8 +469,12 @@ export function InvoicePreviewModal({
 
       <div style="margin-top: 50px; display: flex; justify-content: space-between; font-size: 14px;">
         <div style="flex: 1; max-width: 50%;">
+          ${invoiceData.notes ? `
+          <p style="font-weight: bold; margin-bottom: 12px; font-size: 16px; font-family: Helvetica, Arial, sans-serif;">NOTES</p>
+          <p style="font-size: 14px; margin-bottom: 20px; white-space: pre-line;">${invoiceData.notes}</p>
+          ` : ''}
           <p style="font-weight: bold; margin-bottom: 12px; font-size: 16px; font-family: Helvetica, Arial, sans-serif;">TERM & CONDITION</p>
-          <p style="font-size: 14px; margin-bottom: 12px; white-space: pre-line;">${invoiceData.notes || DEFAULT_TERMS}</p>
+          <p style="font-size: 14px; margin-bottom: 12px; white-space: pre-line;">${invoiceData.terms || DEFAULT_TERMS}</p>
         </div>
         <div style="flex: 1; max-width: 45%; text-align: right;">
           <p style="font-weight: bold; margin-bottom: 12px; font-size: 16px; font-family: Helvetica, Arial, sans-serif;">FOR ANY QUESTIONS, PLEASE CONTACT</p>

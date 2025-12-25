@@ -175,6 +175,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   const [discountType, setDiscountType] = useState<"percent" | "fixed">("percent");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [notes, setNotes] = useState("");
+  const [terms, setTerms] = useState("");
   const [paymentMethods, setPaymentMethods] = useState(basePaymentMethods.map(method => ({ ...method, taxRate: 0 })));
   
   // Step 4: Staff Info
@@ -260,6 +261,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
               if (draft.discountType) setDiscountType(draft.discountType);
               if (draft.paymentMethod) setPaymentMethod(draft.paymentMethod);
               if (draft.notes !== undefined) setNotes(draft.notes);
+              if (draft.terms !== undefined) setTerms(draft.terms);
               if (draft.invoiceStatus) setInvoiceStatus(draft.invoiceStatus);
               if (draft.currentStep) setCurrentStep(draft.currentStep);
               return true;
@@ -482,6 +484,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         discountType,
         paymentMethod,
         notes,
+        terms,
         invoiceStatus,
         currentStep,
         draftInvoiceId, // Include draft invoice ID from database
@@ -497,7 +500,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       // If nothing is selected, clear the draft
       localStorage.removeItem(DRAFT_KEY);
     }
-  }, [selectedCustomerId, selectedVehicleId, items, discount, discountType, paymentMethod, notes, invoiceStatus, currentStep, draftInvoiceId]);
+  }, [selectedCustomerId, selectedVehicleId, items, discount, discountType, paymentMethod, notes, terms, invoiceStatus, currentStep, draftInvoiceId]);
 
   // NOTE: Auto-save on timer is disabled - drafts are only saved when user leaves the page
   // This prevents invoices from being marked as draft while user is still working on them
@@ -521,6 +524,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
           discountType,
           paymentMethod,
           notes,
+          terms,
           invoiceStatus,
           currentStep,
           draftInvoiceId,
@@ -558,6 +562,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
           discountType,
           paymentMethod,
           notes,
+          terms,
           invoiceStatus,
           currentStep,
           draftInvoiceId,
@@ -568,7 +573,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         localStorage.removeItem(DRAFT_KEY);
       }
     };
-  }, [selectedCustomerId, selectedVehicleId, items, discount, discountType, paymentMethod, notes, invoiceStatus, currentStep, draftInvoiceId, editingInvoiceId]);
+  }, [selectedCustomerId, selectedVehicleId, items, discount, discountType, paymentMethod, notes, terms, invoiceStatus, currentStep, draftInvoiceId, editingInvoiceId]);
 
   // Load invoice data for editing
   const loadInvoiceForEditing = async (invoiceId: string) => {
@@ -641,6 +646,11 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         // Set notes
         if (invoice.notes) {
           setNotes(invoice.notes);
+        }
+        
+        // Set terms
+        if (invoice.terms) {
+          setTerms(invoice.terms);
         }
         
         // Set status
@@ -967,7 +977,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   const formatCurrency = (value: number) => `Rs ${Number(value || 0).toLocaleString()}`;
 
   // Calculations
-  const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.price * (item.quantity || 1)), 0);
   const discountAmount = discountType === "percent" 
     ? (subtotal * discount / 100)
     : discount;
@@ -1046,24 +1056,11 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
   };
 
   const handleBack = () => {
-    // If editing, always go back to invoices list instead of going through steps
-    // (customer and vehicle are already selected, so step navigation is not needed)
-    if (editingInvoiceId) {
-      // When editing, clicking back should close or go to invoices list
-      sessionStorage.removeItem('editingInvoiceId');
-      if (onClose) {
-        onClose();
-      } else {
-        navigate("/invoices");
-      }
-      return;
-    }
-    
-    // Normal flow when creating new invoice - go back one step
+    // Go back one step if not on first step
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
     } else {
-      // If on step 1, close/exit the invoice creation
+      // If on step 1, close/exit the invoice creation or editing
       sessionStorage.removeItem('editingInvoiceId');
       if (onClose) {
         onClose();
@@ -1304,13 +1301,29 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       const footerLeftX = margin;
       const footerRightX = pageWidth - margin;
 
+      // Notes section (if any)
+      if (notes) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("NOTES", footerLeftX, currentY);
+        doc.setFont("courier", "normal");
+        doc.setFontSize(8);
+        doc.text(
+          notes,
+          footerLeftX,
+          currentY + 6,
+          { maxWidth: (pageWidth - margin * 2) / 2 }
+        );
+        currentY += 20;
+      }
+
       // Terms & Conditions on left
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.text("TERM & CONDITION", footerLeftX, currentY);
       doc.setFont("courier", "normal");
       doc.setFontSize(8);
-      const termsText = notes || DEFAULT_TERMS;
+      const termsText = terms || DEFAULT_TERMS;
       doc.text(
         termsText,
         footerLeftX,
@@ -1547,13 +1560,29 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       const footerLeftX = margin;
       const footerRightX = pageWidth - margin;
 
+      // Notes section (if any)
+      if (notes) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("NOTES", footerLeftX, currentY);
+        doc.setFont("courier", "normal");
+        doc.setFontSize(8);
+        doc.text(
+          notes,
+          footerLeftX,
+          currentY + 6,
+          { maxWidth: (pageWidth - margin * 2) / 2 }
+        );
+        currentY += 20;
+      }
+
       // Terms & Conditions on left
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.text("TERM & CONDITION", footerLeftX, currentY);
       doc.setFont("courier", "normal");
       doc.setFontSize(8);
-      const termsText = notes || DEFAULT_TERMS;
+      const termsText = terms || DEFAULT_TERMS;
       doc.text(
         termsText,
         footerLeftX,
@@ -1598,34 +1627,61 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     return success;
   };
 
-  const handleEmailInvoice = () => {
+  const handleEmailInvoice = async () => {
     if (!selectedCustomer?.email) {
       toast.error("Customer email is not available");
       return;
     }
 
-    const vehicleInfo = selectedVehicle 
-      ? `${selectedVehicle.year || ''} ${selectedVehicle.make || ''} ${selectedVehicle.model || ''}`.trim()
-      : 'N/A';
+    // Need an invoice ID to send email
+    if (!editingInvoiceId && !draftInvoiceId) {
+      toast.error("Please save the invoice first before sending via email");
+      return;
+    }
 
-    const plateNo = selectedVehicle?.plateNo || selectedVehicle?.plate || '';
-    const customerName = selectedCustomer?.name || '';
-    const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
-    const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : invoiceNumber;
-    const subject = encodeURIComponent(`Invoice ${invoiceId} - Momentum AutoWorks`);
-    const body = encodeURIComponent(
-      `Dear ${selectedCustomer.name},\n\n` +
-      `Please find attached invoice ${invoiceId} for your vehicle.\n\n` +
-      `Invoice Details:\n` +
-      `- Invoice ID: ${invoiceId}\n` +
-      `- Date: ${new Date().toLocaleDateString()}\n` +
-      `- Vehicle: ${vehicleInfo}\n` +
-      `- Total Amount: Rs ${total.toLocaleString()}\n\n` +
-      `Thank you for choosing Momentum AutoWorks!\n\n` +
-      `Best regards,\nMomentum AutoWorks Team`
-    );
-    const mailtoUrl = `mailto:${selectedCustomer.email}?subject=${subject}&body=${body}`;
-    window.location.href = mailtoUrl;
+    const invoiceId = editingInvoiceId || draftInvoiceId;
+
+    try {
+      setIsGeneratingPdf(true);
+      toast.loading("Generating and sending invoice...", { id: "email-invoice" });
+
+      // Generate PDF first
+      const pdfBlob = await generatePDFAsBlob();
+      
+      if (!pdfBlob) {
+        toast.error("Failed to generate invoice PDF", { id: "email-invoice" });
+        setIsGeneratingPdf(false);
+        return;
+      }
+
+      // Convert blob to base64
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onloadend = () => {
+          const base64String = reader.result as string;
+          // Remove data URL prefix (data:application/pdf;base64,)
+          const base64Data = base64String.split(',')[1];
+          resolve(base64Data);
+        };
+        reader.onerror = reject;
+      });
+      reader.readAsDataURL(pdfBlob);
+      const pdfBase64 = await base64Promise;
+
+      // Send email via API
+      const response = await invoicesAPI.sendEmail(invoiceId!, pdfBase64);
+
+      if (response.success) {
+        toast.success(response.message || "Invoice sent successfully!", { id: "email-invoice" });
+      } else {
+        toast.error(response.message || "Failed to send invoice", { id: "email-invoice" });
+      }
+    } catch (error: any) {
+      console.error("Error sending invoice email:", error);
+      toast.error(error.message || "Failed to send invoice email", { id: "email-invoice" });
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const handleWhatsAppInvoice = async () => {
@@ -1672,14 +1728,14 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         : `Rs ${total.toLocaleString()}`;
       
       // Create a simple message
-      const message = `*Invoice ${invoiceId} - Momentum AutoWorks*\n\n` +
+      const message = `*Invoice ${invoiceId} - MAWS*\n\n` +
         `Dear ${selectedCustomer.name},\n\n` +
         `Your invoice details:\n` +
-        `📄 Invoice ID: ${invoiceId}\n` +
-        `📅 Date: ${new Date().toLocaleDateString()}\n` +
-        `🚗 Vehicle: ${vehicleInfo}\n` +
-        `💰 Total Amount: ${totalAmountText}\n\n` +
-        `Thank you for choosing Momentum AutoWorks!`;
+        `- Invoice ID: ${invoiceId}\n` +
+        `- Date: ${new Date().toLocaleDateString()}\n` +
+        `- Vehicle: ${vehicleInfo}\n` +
+        `- Total Amount: ${totalAmountText}\n\n` +
+        `Thank you for choosing MAWS!`;
 
       // Remove all non-digit characters from phone number
       const phone = selectedCustomer.phone.replace(/\D/g, '');
@@ -1725,6 +1781,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     setDiscountType('percent');
     setPaymentMethod('cash');
     setNotes('');
+    setTerms('');
     setInvoiceStatus('Unpaid');
     setSelectedTechnician('');
     setSelectedSupervisor('');
@@ -1878,6 +1935,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       technician: technicianName || undefined,
       supervisor: supervisorName || undefined,
       notes: notes || undefined,
+      terms: terms || undefined,
       date: new Date().toISOString()
     };
   };
@@ -2632,8 +2690,17 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                             <Input
                               type="number"
                               min="1"
-                              value={item.quantity || ''}
-                              onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 1)}
+                              value={item.quantity === 0 ? '' : item.quantity}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                updateItem(item.id, 'quantity', val === '' ? 0 : parseInt(val) || 0);
+                              }}
+                              onBlur={(e) => {
+                                // Ensure minimum of 1 when leaving the field
+                                if (!e.target.value || parseInt(e.target.value) < 1) {
+                                  updateItem(item.id, 'quantity', 1);
+                                }
+                              }}
                               className="text-center"
                               placeholder="1"
                             />
@@ -2655,7 +2722,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                             <Label className="text-xs text-gray-500 mb-2">Total</Label>
                             <div className="h-10 flex items-center justify-end font-medium">
                               <span className="text-xs font-normal mr-0.5">₨</span>
-                              <span className="font-medium">{(item.price * item.quantity).toLocaleString()}</span>
+                              <span className="font-medium">{(item.price * (item.quantity || 1)).toLocaleString()}</span>
                             </div>
                           </div>
                           <div className="col-span-1 flex items-end justify-end">
@@ -2843,8 +2910,21 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                   placeholder="Add any notes or special instructions..."
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  rows={4}
+                  rows={3}
                 />
+              </div>
+
+              <div>
+                <Label className="text-sm mb-2">Terms & Conditions (Optional)</Label>
+                <Textarea
+                  placeholder="Leave blank to use default terms..."
+                  value={terms}
+                  onChange={(e) => setTerms(e.target.value)}
+                  rows={3}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Default: {DEFAULT_TERMS.substring(0, 60)}...
+                </p>
               </div>
             </div>
           )}
@@ -3300,6 +3380,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
             discountType: discountType,
             discountPercent: discountType === "percent" ? discount : undefined,
             notes: notes,
+            terms: terms,
           }}
         />
       )}

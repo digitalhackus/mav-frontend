@@ -490,6 +490,23 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       const footerLeftX = margin;
       const footerRightX = pageWidth - margin;
 
+      // Notes section (if any)
+      const notesText = editedNotes || invoice.notes;
+      if (notesText) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("NOTES", footerLeftX, currentY);
+        doc.setFont("courier", "normal");
+        doc.setFontSize(8);
+        doc.text(
+          notesText,
+          footerLeftX,
+          currentY + 6,
+          { maxWidth: (pageWidth - margin * 2) / 2 }
+        );
+        currentY += 20;
+      }
+
       // Terms & Conditions
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
@@ -869,6 +886,18 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                       </div>
                     </div>
 
+                    {/* Notes Section (if any) */}
+                    {(editedNotes || invoice.notes) && (
+                      <div className="mb-8">
+                        <h4 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          NOTES
+                        </h4>
+                        <p className="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          {editedNotes || invoice.notes}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Footer - TERM & CONDITION and Contact Info */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
                       {/* Terms & Conditions - Left */}
@@ -1235,6 +1264,17 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
               </div>
             </div>
 
+            {/* Notes Section (if any) */}
+            {(editedNotes || invoice.notes) && (
+              <div className="mb-8">
+                <h4 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  NOTES
+                </h4>
+                <p className="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  {editedNotes || invoice.notes}
+                </p>
+              </div>
+            )}
 
             {/* Footer - TERM & CONDITION and Contact Info */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">

@@ -7,7 +7,7 @@ import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "./ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,8 +40,14 @@ import {
   ImageIcon,
   AlertCircle,
   Loader2,
-  Trash2
+  Trash2,
+  ChevronDown
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./ui/popover";
 import { motion } from "motion/react";
 import { VehicleProfile } from "./VehicleProfile";
 import { vehiclesAPI, customersAPI, serviceHistoryAPI, jobsAPI } from "../api/client";
@@ -78,7 +84,47 @@ export function Vehicles() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [vehicleToEdit, setVehicleToEdit] = useState<any | null>(null);
   const [editVehicleStatus, setEditVehicleStatus] = useState<string>("Active");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterServiceAge, setFilterServiceAge] = useState<string>("all");
   const { getButtonStyle } = useThemeStyles();
+
+  // Filter and sort vehicles based on selected filters
+  const filteredVehicles = vehicles
+    .filter(vehicle => {
+      const statusMatch = filterStatus === "all" || vehicle.status === filterStatus;
+      return statusMatch;
+    })
+    .sort((a, b) => {
+      if (filterServiceAge === "oldest") {
+        // Sort by last service date (oldest first, no service date = oldest)
+        const dateA = a.lastService ? new Date(a.lastService).getTime() : 0;
+        const dateB = b.lastService ? new Date(b.lastService).getTime() : 0;
+        return dateA - dateB;
+      } else if (filterServiceAge === "newest") {
+        // Sort by last service date (newest first)
+        const dateA = a.lastService ? new Date(a.lastService).getTime() : 0;
+        const dateB = b.lastService ? new Date(b.lastService).getTime() : 0;
+        return dateB - dateA;
+      } else if (filterServiceAge === "never") {
+        // Filter only vehicles that have never been serviced
+        return 0;
+      }
+      return 0;
+    })
+    .filter(vehicle => {
+      if (filterServiceAge === "never") {
+        return !vehicle.lastService;
+      }
+      return true;
+    });
+
+  const activeFiltersCount = (filterStatus !== "all" ? 1 : 0) + (filterServiceAge !== "all" ? 1 : 0);
+
+  const clearFilters = () => {
+    setFilterStatus("all");
+    setFilterServiceAge("all");
+  };
 
   const fetchVehicles = async () => {
     try {
@@ -295,21 +341,13 @@ export function Vehicles() {
 
   const handleVehicleClick = (vehicle: typeof vehicles[0]) => {
     setSelectedVehicle(vehicle);
-    // Add to browser history so back button works
-    const vehicleId = vehicle._id || vehicle.id;
-    window.history.pushState({ page: "vehicles", vehicleId }, "", `/vehicles/${vehicleId}`);
   };
 
   const handleCloseVehicleProfile = () => {
     setSelectedVehicle(null);
     setSearchParams({});
-    // Update URL to remove vehicle view from history
-    if (window.history.length > 1) {
-      window.history.back();
-    } else {
-      // If no history, just update to vehicles page
-      window.history.replaceState({ page: "vehicles" }, "", "/vehicles");
-    }
+    // Navigate to vehicles page
+    navigate("/vehicles");
   };
 
   const handleDeleteVehicle = async () => {
@@ -431,26 +469,147 @@ export function Vehicles() {
   // If a vehicle is selected, show the VehicleProfile
   if (selectedVehicle) {
     return (
-      <VehicleProfile
-        vehicle={{
-          id: selectedVehicle._id || selectedVehicle.id,
-          make: selectedVehicle.make,
-          model: selectedVehicle.model,
-          year: selectedVehicle.year,
-          plate: selectedVehicle.plateNo,
-          ownerId: selectedVehicle.customer?._id || selectedVehicle.customer?.id,
-          ownerName: selectedVehicle.customer?.name || 'N/A',
-        }}
-        onClose={handleCloseVehicleProfile}
-        onEdit={() => handleEditVehicle(selectedVehicle)}
-        onDelete={() => handleDeleteClick(selectedVehicle)}
-        onViewOwner={(ownerId) => {
-          // Navigate to customers page and highlight this customer
-          navigate(`/customers?customerId=${ownerId}`);
-        }}
-        onCreateJobCard={() => handleCreateJobCard(selectedVehicle)}
-        onCreateInvoice={() => handleCreateInvoice(selectedVehicle)}
-      />
+      <>
+        <VehicleProfile
+          vehicle={{
+            id: selectedVehicle._id || selectedVehicle.id,
+            make: selectedVehicle.make,
+            model: selectedVehicle.model,
+            year: selectedVehicle.year,
+            plate: selectedVehicle.plateNo,
+            ownerId: selectedVehicle.customer?._id || selectedVehicle.customer?.id,
+            ownerName: selectedVehicle.customer?.name || 'N/A',
+          }}
+          onClose={handleCloseVehicleProfile}
+          onEdit={() => handleEditVehicle(selectedVehicle)}
+          onDelete={() => handleDeleteClick(selectedVehicle)}
+          onViewOwner={(ownerId) => {
+            // Navigate to customers page and highlight this customer
+            navigate(`/customers?customerId=${ownerId}`);
+          }}
+          onCreateJobCard={() => handleCreateJobCard(selectedVehicle)}
+          onCreateInvoice={() => handleCreateInvoice(selectedVehicle)}
+        />
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Vehicle</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete <strong>{vehicleToDelete?.make} {vehicleToDelete?.model}</strong> (Plate: {vehicleToDelete?.plateNo})? 
+                This action cannot be undone. The vehicle will be marked as inactive but service history will be preserved.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={handleDeleteCancel}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteVehicle}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Edit Vehicle Dialog */}
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Edit Vehicle</DialogTitle>
+              <DialogDescription>
+                Update vehicle information for {vehicleToEdit?.make} {vehicleToEdit?.model}
+              </DialogDescription>
+            </DialogHeader>
+            {vehicleToEdit && (
+              <form onSubmit={handleSaveEditVehicle} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit-make">Make *</Label>
+                    <Input
+                      id="edit-make"
+                      name="make"
+                      defaultValue={vehicleToEdit.make}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-model">Model *</Label>
+                    <Input
+                      id="edit-model"
+                      name="model"
+                      defaultValue={vehicleToEdit.model}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-year">Year *</Label>
+                    <Input
+                      id="edit-year"
+                      name="year"
+                      type="number"
+                      min="1900"
+                      max="2025"
+                      defaultValue={vehicleToEdit.year}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-plate">Plate Number *</Label>
+                    <Input
+                      id="edit-plate"
+                      name="plate"
+                      defaultValue={vehicleToEdit.plateNo}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-mileage">Mileage (km)</Label>
+                    <Input
+                      id="edit-mileage"
+                      name="mileage"
+                      type="number"
+                      min="0"
+                      defaultValue={vehicleToEdit.mileage || 0}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-oilType">Oil Type</Label>
+                    <Input
+                      id="edit-oilType"
+                      name="oilType"
+                      defaultValue={vehicleToEdit.oilType || ""}
+                      placeholder="e.g., 5w30-synthetic"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-status">Status</Label>
+                    <Select value={editVehicleStatus} onValueChange={setEditVehicleStatus}>
+                      <SelectTrigger id="edit-status">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Active">Active</SelectItem>
+                        <SelectItem value="Due">Due</SelectItem>
+                        <SelectItem value="Overdue">Overdue</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={handleEditCancel}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" style={getButtonStyle()}>
+                    Save Changes
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
+      </>
     );
   }
 
@@ -1051,10 +1210,70 @@ export function Vehicles() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <Button variant="outline">
-              <Filter className="h-4 w-4 mr-2" />
-              Filters
-            </Button>
+            <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="relative">
+                  <Filter className="h-4 w-4 mr-2" />
+                  Filters
+                  {activeFiltersCount > 0 && (
+                    <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-[#c53032] text-white text-xs flex items-center justify-center">
+                      {activeFiltersCount}
+                    </span>
+                  )}
+                  <ChevronDown className="h-4 w-4 ml-2" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72" align="end">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium">Filters</h4>
+                    {activeFiltersCount > 0 && (
+                      <Button variant="ghost" size="sm" onClick={clearFilters} className="text-xs h-7">
+                        Clear all
+                      </Button>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label className="text-sm">Status</Label>
+                    <Select value={filterStatus} onValueChange={setFilterStatus}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All statuses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="Active">Active</SelectItem>
+                        <SelectItem value="Due">Due</SelectItem>
+                        <SelectItem value="Overdue">Overdue</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">Service History</Label>
+                    <Select value={filterServiceAge} onValueChange={setFilterServiceAge}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All vehicles" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All vehicles</SelectItem>
+                        <SelectItem value="oldest">Oldest service first</SelectItem>
+                        <SelectItem value="newest">Newest service first</SelectItem>
+                        <SelectItem value="never">Never serviced</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Button 
+                    className="w-full text-white"
+                    style={getButtonStyle()}
+                    onClick={() => setIsFilterOpen(false)}
+                  >
+                    Apply Filters
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </CardContent>
       </Card>
@@ -1073,13 +1292,15 @@ export function Vehicles() {
             <div className="p-4 bg-red-50 border border-red-200 rounded text-red-600">
               {error}
             </div>
-          ) : vehicles.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No vehicles found</div>
+          ) : filteredVehicles.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              {vehicles.length === 0 ? "No vehicles found" : "No vehicles match the selected filters"}
+            </div>
           ) : (
             <>
               {/* Mobile Card View */}
               <div className="lg:hidden space-y-3">
-                {vehicles.map((vehicle, index) => (
+                {filteredVehicles.map((vehicle, index) => (
                   <motion.div
                     key={vehicle._id || vehicle.id}
                 initial={{ opacity: 0, x: -20 }}
@@ -1153,7 +1374,7 @@ export function Vehicles() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {vehicles.map((vehicle, index) => (
+              {filteredVehicles.map((vehicle, index) => (
                 <motion.tr
                   key={vehicle._id || vehicle.id}
                   initial={{ opacity: 0, x: -20 }}

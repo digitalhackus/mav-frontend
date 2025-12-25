@@ -6,8 +6,10 @@ import { Checkbox } from "./ui/checkbox";
 import { Facebook, Instagram, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { authAPI } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
+import { toast } from "sonner";
+import { Toaster } from "./ui/sonner";
 
-type View = 'login' | 'signup' | 'verification' | 'forgot-password' | 'reset-password';
+type View = 'login' | 'signup' | 'verification' | 'forgot-password' | 'reset-password' | '2fa';
 
 export function Login() {
   const { login: authLogin } = useAuth();
@@ -17,7 +19,8 @@ export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState("+92");
+  const [phoneError, setPhoneError] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -96,6 +99,26 @@ export function Login() {
     return emailRegex.test(email);
   };
 
+  const validatePhone = (phone: string): boolean => {
+    // Pakistani phone format: +92 followed by 10 digits
+    const phoneRegex = /^\+92[0-9]{10}$/;
+    return phoneRegex.test(phone);
+  };
+
+  const handlePhoneChange = (value: string) => {
+    // Ensure it always starts with +92
+    if (!value.startsWith("+92")) {
+      value = "+92";
+    }
+    // Remove any non-digit characters after +92
+    const prefix = "+92";
+    const rest = value.slice(3).replace(/\D/g, "");
+    // Limit to 10 digits after +92
+    const limitedRest = rest.slice(0, 10);
+    setPhone(prefix + limitedRest);
+    setPhoneError("");
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -139,6 +162,12 @@ export function Login() {
         authLogin(response.accessToken, response.user);
         // Redirect to dashboard
         navigate("/dashboard", { replace: true });
+      } else if (response.requires2FA && response.userId) {
+        // 2FA required - switch to 2FA view
+        setUserId(response.userId);
+        setView('2fa');
+        setOtp("");
+        toast.success("Verification code sent to your email");
       } else if (response.requiresVerification && response.userId) {
         setUserId(response.userId);
         setView('verification');
@@ -160,11 +189,43 @@ export function Login() {
     }
   };
 
+  const handleVerify2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    if (!otp || otp.length !== 6) {
+      setError("Please enter the 6-digit verification code");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await authAPI.verify2FA(userId, otp);
+      if (response.success && response.user && response.accessToken) {
+        // Use the auth context login function
+        authLogin(response.accessToken, response.user);
+        toast.success("Login successful!");
+        // Redirect to dashboard
+        navigate("/dashboard", { replace: true });
+      } else {
+        toast.error(response.error || "Invalid verification code");
+        setError(response.error || "Invalid verification code");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Verification failed");
+      setError(err.message || "Verification failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setEmailError("");
     setPasswordError("");
+    setPhoneError("");
     setLoading(true);
 
     // Custom validation
@@ -190,6 +251,14 @@ export function Login() {
       hasError = true;
     }
 
+    if (!phone || phone === "+92") {
+      setPhoneError("Please enter your phone number");
+      hasError = true;
+    } else if (!validatePhone(phone)) {
+      setPhoneError("Please enter a valid Pakistani phone number (+92 followed by 10 digits)");
+      hasError = true;
+    }
+
     if (hasError) {
       setLoading(false);
       return;
@@ -212,7 +281,7 @@ export function Login() {
         const message = response.user.role === 'admin'
           ? "Admin account created! Please check your email for the verification OTP."
           : "Signup successful! Please check your email for the verification OTP.";
-        alert(message);
+        toast.success(message);
       } else {
         setError(response.error || "Signup failed. Please try again.");
       }
@@ -249,7 +318,7 @@ export function Login() {
         // Clear password from signup
         setPassword("");
         setName("");
-        alert("Email verified successfully! You can now login.");
+        toast.success("Email verified successfully! You can now login.");
       } else {
         setError(response.error || "Verification failed. Please try again.");
       }
@@ -271,7 +340,7 @@ export function Login() {
           setUserId(response.userId);
         }
         setError("");
-        alert("Verification OTP sent! Please check your email.");
+        toast.success("Verification OTP sent! Please check your email.");
       } else {
         setError(response.error || "Failed to resend OTP. Please try again.");
       }
@@ -289,29 +358,18 @@ export function Login() {
     setLoading(true);
 
     try {
-      if (forgotPasswordMethod === 'email') {
-        if (!email) {
-          setEmailError("Please enter your email");
-          setLoading(false);
-          return;
-        }
-        if (!validateEmail(email)) {
-          setEmailError("Please enter a valid email address");
-          setLoading(false);
-          return;
-        }
-      } else {
-        if (!phone) {
-          setError("Please enter your phone number");
-          setLoading(false);
-          return;
-        }
+      if (!email) {
+        setEmailError("Please enter your email");
+        setLoading(false);
+        return;
+      }
+      if (!validateEmail(email)) {
+        setEmailError("Please enter a valid email address");
+        setLoading(false);
+        return;
       }
 
-      const response = await authAPI.forgotPassword(
-        forgotPasswordMethod === 'email' ? email : phone,
-        forgotPasswordMethod
-      );
+      const response = await authAPI.forgotPassword(email, 'email');
       if (response.success) {
         if (response.userId) {
           setUserId(response.userId);
@@ -322,8 +380,9 @@ export function Login() {
         }
         setView('reset-password');
         setError("");
-        const method = forgotPasswordMethod === 'email' ? 'email' : 'phone';
-        alert(`Password reset OTP sent to your ${method}! Please check your ${method === 'email' ? 'email' : 'phone'}. If email is not configured, check the server console for the OTP.`);
+        toast.success(`Password reset OTP sent to your email!`, {
+          description: `Please check your email.`
+        });
       } else {
         setError(response.error || "Failed to send reset OTP. Please try again.");
       }
@@ -371,7 +430,7 @@ export function Login() {
         setNewPassword("");
         setConfirmPassword("");
         setError("");
-        alert("Password reset successfully! You can now login.");
+        toast.success("Password reset successfully! You can now login.");
       } else {
         setError(response.error || "Password reset failed. Please try again.");
       }
@@ -383,6 +442,8 @@ export function Login() {
   };
 
   return (
+    <>
+    <Toaster position="top-center" richColors />
     <div className="min-h-screen flex overflow-hidden">
       {/* Left Side - Image & Social */}
       <div 
@@ -438,10 +499,7 @@ export function Login() {
                   <span className="font-medium text-[#c53032]">{email}</span>
                 </p>
                 <p className="text-xs text-gray-500 mt-2">
-                  Check your inbox or spam folder. If you don't receive it, check the server console for the OTP (development mode).
-                </p>
-                <p className="text-xs text-blue-600 mt-2 font-medium">
-                  💡 Tip: Check the server console/terminal for the OTP if email is not configured
+                  Check your inbox or spam folder.
                 </p>
                 {userId && (
                   <p className="text-xs text-green-600 mt-2 font-medium">
@@ -515,7 +573,7 @@ export function Login() {
               <div className="text-center mb-6">
                 <h2 className="text-2xl font-semibold text-gray-800 mb-2">Forgot Password</h2>
                 <p className="text-sm text-gray-600">
-                  Enter your email address or phone number and we'll send you a password reset OTP.
+                  Enter your email address and we'll send you a password reset OTP.
                 </p>
               </div>
 
@@ -525,58 +583,21 @@ export function Login() {
                 </div>
               )}
 
-              <div className="flex gap-2 mb-4">
-                <button
-                  type="button"
-                  onClick={() => setForgotPasswordMethod('email')}
-                  className={`flex-1 py-2 px-4 rounded text-sm font-medium transition-colors ${
-                    forgotPasswordMethod === 'email'
-                      ? 'bg-[#c53032] text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  Email
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setForgotPasswordMethod('phone')}
-                  className={`flex-1 py-2 px-4 rounded text-sm font-medium transition-colors ${
-                    forgotPasswordMethod === 'phone'
-                      ? 'bg-[#c53032] text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  Phone
-                </button>
+              <div>
+                <Input
+                  type="email"
+                  placeholder="Email"
+                  className={`h-12 bg-gray-50 border-gray-200 ${emailError ? 'border-red-500' : ''}`}
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setEmailError("");
+                  }}
+                />
+                {emailError && (
+                  <p className="mt-1 text-sm text-red-600">{emailError}</p>
+                )}
               </div>
-
-              {forgotPasswordMethod === 'email' ? (
-                <div>
-                  <Input
-                    type="email"
-                    placeholder="Email"
-                    className={`h-12 bg-gray-50 border-gray-200 ${emailError ? 'border-red-500' : ''}`}
-                    value={email}
-                    onChange={(e) => {
-                      setEmail(e.target.value);
-                      setEmailError("");
-                    }}
-                  />
-                  {emailError && (
-                    <p className="mt-1 text-sm text-red-600">{emailError}</p>
-                  )}
-                </div>
-              ) : (
-                <div>
-                  <Input
-                    type="tel"
-                    placeholder="Phone Number"
-                    className="h-12 bg-gray-50 border-gray-200"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                </div>
-              )}
 
               <Button 
                 type="submit" 
@@ -610,9 +631,6 @@ export function Login() {
                 <h2 className="text-2xl font-semibold text-gray-800 mb-2">Reset Password</h2>
                 <p className="text-sm text-gray-600">
                   Enter the OTP sent to your account email and your new password.
-                </p>
-                <p className="text-xs text-blue-600 mt-2 font-medium">
-                  💡 Tip: If email is not configured, check the server console/terminal for the OTP
                 </p>
                 {email && (
                   <p className="text-xs text-gray-500 mt-1">
@@ -704,6 +722,68 @@ export function Login() {
                     setOtp("");
                     setNewPassword("");
                     setConfirmPassword("");
+                    setError("");
+                  }}
+                  className="text-sm text-gray-600 hover:text-[#c53032] hover:underline flex items-center justify-center gap-1"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back to Login
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Two-Factor Authentication View */}
+          {view === '2fa' && (
+            <form onSubmit={handleVerify2FA} noValidate className="space-y-5">
+              <div className="text-center mb-6">
+                <h2 className="text-2xl font-semibold text-gray-800 mb-2">Two-Factor Authentication</h2>
+                <p className="text-sm text-gray-600">
+                  Enter the verification code sent to your email.
+                </p>
+                {email && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Code sent to: <span className="font-medium text-[#c53032]">{email}</span>
+                  </p>
+                )}
+              </div>
+
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded text-red-600 text-sm">
+                  {error}
+                </div>
+              )}
+
+              <div>
+                <Input
+                  type="text"
+                  placeholder="Enter 6-digit code"
+                  className="h-12 bg-gray-50 border-gray-200 text-center text-2xl tracking-widest"
+                  value={otp}
+                  onChange={(e) => {
+                    const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+                    setOtp(value);
+                  }}
+                  maxLength={6}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <Button 
+                type="submit" 
+                className="w-full h-12 bg-[#c53032] hover:bg-[#a6212a] text-white"
+                disabled={loading || otp.length !== 6}
+              >
+                {loading ? "Verifying..." : "Verify & Login"}
+              </Button>
+
+              <div className="text-center pt-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setView('login');
+                    setOtp("");
                     setError("");
                   }}
                   className="text-sm text-gray-600 hover:text-[#c53032] hover:underline flex items-center justify-center gap-1"
@@ -874,11 +954,12 @@ export function Login() {
               <div>
                 <Input
                   type="tel"
-                  placeholder="Phone Number (Optional)"
-                  className="h-12 bg-gray-50 border-gray-200"
+                  placeholder="+92XXXXXXXXXX"
+                  className={`h-12 bg-gray-50 border-gray-200 ${phoneError ? 'border-red-500' : ''}`}
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => handlePhoneChange(e.target.value)}
                 />
+                {phoneError && <p className="text-red-500 text-xs mt-1">{phoneError}</p>}
               </div>
 
               <div className="relative">
@@ -943,5 +1024,6 @@ export function Login() {
         </div>
       </div>
     </div>
+    </>
   );
 }

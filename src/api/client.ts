@@ -78,6 +78,7 @@ const apiRequest = async <T>(
                       url.includes('/api/auth/forgot-password') ||
                       url.includes('/api/auth/reset-password') ||
                       url.includes('/api/auth/verify-email') ||
+                      url.includes('/api/auth/verify-2fa') ||
                       url.includes('/api/auth/send-verification-otp') ||
                       url.includes('/api/auth/invitation/');
 
@@ -207,7 +208,7 @@ const apiRequest = async <T>(
 // Auth API
 export const authAPI = {
   login: async (email: string, password: string) => {
-    const data = await apiRequest<{ success: boolean; accessToken?: string; refreshToken?: string; user?: any; error?: string; requiresVerification?: boolean; userId?: string }>(
+    const data = await apiRequest<{ success: boolean; accessToken?: string; refreshToken?: string; user?: any; error?: string; errorType?: string; requiresVerification?: boolean; requires2FA?: boolean; userId?: string; message?: string }>(
       '/api/auth/login',
       {
         method: 'POST',
@@ -216,6 +217,20 @@ export const authAPI = {
     );
     // Note: Token storage is handled by AuthContext.login() - don't duplicate here
     // Only store refreshToken at API level for token refresh mechanics
+    if (data.success && data.refreshToken) {
+      localStorage.setItem('mw_refreshToken', data.refreshToken);
+    }
+    return data;
+  },
+
+  verify2FA: async (userId: string, otp: string) => {
+    const data = await apiRequest<{ success: boolean; accessToken?: string; refreshToken?: string; user?: any; error?: string; message?: string }>(
+      '/api/auth/verify-2fa',
+      {
+        method: 'POST',
+        body: JSON.stringify({ userId, otp }),
+      }
+    );
     if (data.success && data.refreshToken) {
       localStorage.setItem('mw_refreshToken', data.refreshToken);
     }
@@ -493,11 +508,12 @@ export const jobsAPI = {
 
 // Dashboard API
 export const dashboardAPI = {
-  getSummary: async () => {
+  getSummary: async (days: number = 7) => {
     return apiRequest<{
       success: boolean;
       data: {
-        todayJobs: number;
+        periodJobs: number;
+        completedToday: number;
         jobsByStatus: {
           PENDING: number;
           IN_PROGRESS: number;
@@ -505,9 +521,10 @@ export const dashboardAPI = {
           DELIVERED: number;
         };
         totalCustomers: number;
-        todayRevenue: number;
+        periodRevenue: number;
+        days: number;
       };
-    }>('/api/dashboard/summary');
+    }>(`/api/dashboard/summary?days=${days}`);
   },
 };
 
@@ -682,6 +699,7 @@ export const invoicesAPI = {
     technician?: string;
     supervisor?: string;
     notes?: string;
+    terms?: string;
   }) => {
     return apiRequest<{ success: boolean; message: string; data: any }>(
       '/api/invoices',
@@ -709,6 +727,7 @@ export const invoicesAPI = {
     technician?: string;
     supervisor?: string;
     notes?: string;
+    terms?: string;
   }>) => {
     return apiRequest<{ success: boolean; message: string; data: any }>(
       `/api/invoices/${id}`,
@@ -724,6 +743,16 @@ export const invoicesAPI = {
       `/api/invoices/${id}`,
       {
         method: 'DELETE',
+      }
+    );
+  },
+
+  sendEmail: async (id: string, pdfBase64: string) => {
+    return apiRequest<{ success: boolean; message: string }>(
+      `/api/invoices/${id}/email`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ pdfBase64 }),
       }
     );
   },

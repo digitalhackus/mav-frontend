@@ -76,7 +76,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
   const [overdueAlerts, setOverdueAlerts] = useState(true);
   const [overdueDays, setOverdueDays] = useState(7);
   const [jobCompletion, setJobCompletion] = useState(true);
-  const [whatsapp, setWhatsapp] = useState(false);
 
   // Email settings
   const [fromEmail, setFromEmail] = useState("");
@@ -230,7 +229,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           setOverdueAlerts(data.notifications.overdueAlerts ?? true);
           setOverdueDays(data.notifications.overdueDays || 7);
           setJobCompletion(data.notifications.jobCompletion ?? true);
-          setWhatsapp(data.notifications.whatsapp ?? false);
         }
 
         // Load email settings
@@ -344,7 +342,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           overdueAlerts,
           overdueDays,
           jobCompletion,
-          whatsapp,
         },
       });
       toast.success("Notification settings saved successfully");
@@ -626,16 +623,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-3">
-                    <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium text-blue-900">Payment-Based Tax Rates</p>
-                      <p className="text-xs text-blue-700 mt-1">
-                        Different tax rates will be automatically applied based on the payment method selected during invoice creation.
-                      </p>
-                    </div>
-                  </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
@@ -850,17 +837,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                 />
               </div>
 
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">WhatsApp Notifications</p>
-                  <p className="text-sm text-gray-600">Send notifications via WhatsApp</p>
-                </div>
-                <Switch 
-                  checked={whatsapp}
-                  onCheckedChange={setWhatsapp}
-                />
-              </div>
-
               {/* Sticky Footer */}
               <div className="sticky bottom-0 left-0 right-0 bg-white border-t pt-4 mt-6 flex justify-center gap-3">
                 <Button 
@@ -927,6 +903,7 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                   type="password" 
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
+                  autoComplete="off"
                 />
               </div>
 
@@ -938,6 +915,7 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                     type="password" 
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
                   />
                 </div>
                 <div className="space-y-2">
@@ -947,6 +925,7 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                     type="password" 
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
                   />
                 </div>
               </div>

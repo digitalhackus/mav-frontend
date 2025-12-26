@@ -358,16 +358,16 @@ export function Login() {
     setLoading(true);
 
     try {
-      if (!email) {
-        setEmailError("Please enter your email");
-        setLoading(false);
-        return;
-      }
-      if (!validateEmail(email)) {
-        setEmailError("Please enter a valid email address");
-        setLoading(false);
-        return;
-      }
+        if (!email) {
+          setEmailError("Please enter your email");
+          setLoading(false);
+          return;
+        }
+        if (!validateEmail(email)) {
+          setEmailError("Please enter a valid email address");
+          setLoading(false);
+          return;
+        }
 
       const response = await authAPI.forgotPassword(email, 'email');
       if (response.success) {
@@ -583,21 +583,21 @@ export function Login() {
                 </div>
               )}
 
-              <div>
-                <Input
-                  type="email"
-                  placeholder="Email"
-                  className={`h-12 bg-gray-50 border-gray-200 ${emailError ? 'border-red-500' : ''}`}
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setEmailError("");
-                  }}
-                />
-                {emailError && (
-                  <p className="mt-1 text-sm text-red-600">{emailError}</p>
-                )}
-              </div>
+                <div>
+                  <Input
+                    type="email"
+                    placeholder="Email"
+                    className={`h-12 bg-gray-50 border-gray-200 ${emailError ? 'border-red-500' : ''}`}
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setEmailError("");
+                    }}
+                  />
+                  {emailError && (
+                    <p className="mt-1 text-sm text-red-600">{emailError}</p>
+                  )}
+                </div>
 
               <Button 
                 type="submit" 

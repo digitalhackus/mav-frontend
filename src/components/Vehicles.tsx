@@ -470,26 +470,26 @@ export function Vehicles() {
   if (selectedVehicle) {
     return (
       <>
-        <VehicleProfile
-          vehicle={{
-            id: selectedVehicle._id || selectedVehicle.id,
-            make: selectedVehicle.make,
-            model: selectedVehicle.model,
-            year: selectedVehicle.year,
-            plate: selectedVehicle.plateNo,
-            ownerId: selectedVehicle.customer?._id || selectedVehicle.customer?.id,
-            ownerName: selectedVehicle.customer?.name || 'N/A',
-          }}
-          onClose={handleCloseVehicleProfile}
-          onEdit={() => handleEditVehicle(selectedVehicle)}
-          onDelete={() => handleDeleteClick(selectedVehicle)}
-          onViewOwner={(ownerId) => {
-            // Navigate to customers page and highlight this customer
-            navigate(`/customers?customerId=${ownerId}`);
-          }}
-          onCreateJobCard={() => handleCreateJobCard(selectedVehicle)}
-          onCreateInvoice={() => handleCreateInvoice(selectedVehicle)}
-        />
+      <VehicleProfile
+        vehicle={{
+          id: selectedVehicle._id || selectedVehicle.id,
+          make: selectedVehicle.make,
+          model: selectedVehicle.model,
+          year: selectedVehicle.year,
+          plate: selectedVehicle.plateNo,
+          ownerId: selectedVehicle.customer?._id || selectedVehicle.customer?.id,
+          ownerName: selectedVehicle.customer?.name || 'N/A',
+        }}
+        onClose={handleCloseVehicleProfile}
+        onEdit={() => handleEditVehicle(selectedVehicle)}
+        onDelete={() => handleDeleteClick(selectedVehicle)}
+        onViewOwner={(ownerId) => {
+          // Navigate to customers page and highlight this customer
+          navigate(`/customers?customerId=${ownerId}`);
+        }}
+        onCreateJobCard={() => handleCreateJobCard(selectedVehicle)}
+        onCreateInvoice={() => handleCreateInvoice(selectedVehicle)}
+      />
 
         {/* Delete Confirmation Dialog */}
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -1213,15 +1213,15 @@ export function Vehicles() {
             <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
               <PopoverTrigger asChild>
                 <Button variant="outline" className="relative">
-                  <Filter className="h-4 w-4 mr-2" />
-                  Filters
+              <Filter className="h-4 w-4 mr-2" />
+              Filters
                   {activeFiltersCount > 0 && (
                     <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-[#c53032] text-white text-xs flex items-center justify-center">
                       {activeFiltersCount}
                     </span>
                   )}
                   <ChevronDown className="h-4 w-4 ml-2" />
-                </Button>
+            </Button>
               </PopoverTrigger>
               <PopoverContent className="w-72" align="end">
                 <div className="space-y-4">

@@ -575,7 +575,7 @@ export function Notifications() {
       {/* Notifications List */}
       <Card>
         <CardHeader>
-          <CardTitle>Job Cards</CardTitle>
+            <CardTitle>Job Cards</CardTitle>
         </CardHeader>
         <CardContent>
           {notifications.length === 0 ? (
@@ -664,11 +664,11 @@ export function Notifications() {
                               <span className="hidden sm:inline">Email</span>
                             </Button>
                           )}
-                          {notification.emailSent && (
-                            <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
-                              <Mail className="h-3 w-3 mr-1" />
-                              Email Sent
-                            </Badge>
+                              {notification.emailSent && (
+                                <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
+                                  <Mail className="h-3 w-3 mr-1" />
+                                  Email Sent
+                                </Badge>
                           )}
                         </div>
                         <span className="text-xs text-gray-500">{formatTimeAgo(notification.timestamp)}</span>

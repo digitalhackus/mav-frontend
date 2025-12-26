@@ -72,6 +72,8 @@ interface InvoiceItem {
   taxRate?: number;
   catalogItemId?: string;
   inventoryItemId?: string;
+  maxStock?: number; // Track available stock for inventory items
+  isInventoryItem?: boolean; // Flag to identify inventory items
 }
 
 interface AddInvoiceProps {
@@ -997,6 +999,9 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
     // Store references for inventory deduction
     catalogItemId: product?.isCatalogItem ? product.id : undefined,
     inventoryItemId: product?.isInventoryItem ? product.inventoryItem?._id : (product?.inventoryItemId || undefined),
+    // Track stock for inventory items to limit quantity
+    maxStock: product?.isInventoryItem ? (product?.currentStock || 0) : undefined,
+    isInventoryItem: product?.isInventoryItem || false,
   });
 
   const addItem = (product?: any) => {
@@ -1004,6 +1009,12 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       // Add custom item (no product provided)
       const newItem = createInvoiceItem();
       setItems((prev) => [...prev, newItem]);
+      return;
+    }
+
+    // Check if inventory item is out of stock
+    if (product.isInventoryItem && product.currentStock <= 0) {
+      toast.error(`${product.name} is out of stock`);
       return;
     }
 
@@ -2597,7 +2608,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                     ) : (
                       mostUsedServices.map((item: any) => {
                         const isLowStock = item.isInventoryItem && item.currentStock <= item.minStock;
-                        const isOutOfStock = item.isInventoryItem && item.currentStock < 0;
+                        const isOutOfStock = item.isInventoryItem && item.currentStock <= 0;
                         
                         return (
                           <button
@@ -2690,10 +2701,17 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                             <Input
                               type="number"
                               min="1"
+                              max={item.isInventoryItem && item.maxStock ? item.maxStock : undefined}
                               value={item.quantity === 0 ? '' : item.quantity}
                               onChange={(e) => {
                                 const val = e.target.value;
-                                updateItem(item.id, 'quantity', val === '' ? 0 : parseInt(val) || 0);
+                                let newQty = val === '' ? 0 : parseInt(val) || 0;
+                                // Limit to available stock for inventory items
+                                if (item.isInventoryItem && item.maxStock && newQty > item.maxStock) {
+                                  newQty = item.maxStock;
+                                  toast.error(`Maximum available stock is ${item.maxStock}`);
+                                }
+                                updateItem(item.id, 'quantity', newQty);
                               }}
                               onBlur={(e) => {
                                 // Ensure minimum of 1 when leaving the field
@@ -2704,6 +2722,11 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                               className="text-center"
                               placeholder="1"
                             />
+                            {item.isInventoryItem && item.maxStock && (
+                              <p className="text-xs text-slate-500 mt-1 text-center">
+                                Max: {item.maxStock}
+                              </p>
+                            )}
                           </div>
                           <div className="col-span-2">
                             <Label className="text-xs text-gray-500 mb-2">Price (₨)</Label>
@@ -3142,7 +3165,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
                 filteredProducts.map((product: any) => {
                   const isSelected = selectedCatalogProducts.includes(product.id);
                   const isLowStock = product.isInventoryItem && product.currentStock <= product.minStock;
-                  const isOutOfStock = product.isInventoryItem && product.currentStock < 0;
+                  const isOutOfStock = product.isInventoryItem && product.currentStock <= 0;
                   
                   // Check if product is already added to invoice
                   const isAlreadyAdded = items.some((item) => {

@@ -12,7 +12,7 @@ import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Checkbox } from "./ui/checkbox";
 import { Progress } from "./ui/progress";
 import { ScrollArea } from "./ui/scroll-area";
-import { customersAPI, vehiclesAPI, invoicesAPI, jobsAPI, commentsAPI, catalogAPI, inventoryAPI } from "../api/client";
+import { customersAPI, vehiclesAPI, invoicesAPI, jobsAPI, commentsAPI, catalogAPI, inventoryAPI, settingsAPI } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { connectSocket, onCommentAdded } from "../lib/socket";
 import { formatCustomerId, formatVehicleId, formatJobId, formatInvoiceId } from "../utils/idFormatter";
@@ -490,6 +490,12 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
   const [uploadedFiles, setUploadedFiles] = useState<any[]>(jobCard?.files || []);
   const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
+  const [businessProfile, setBusinessProfile] = useState({
+    name: "MOMENTUM AUTOWORKS",
+    address: "",
+    phone: "+92 300 1234567",
+    email: "info@momentumauto.pk",
+  });
   const [catalogServices, setCatalogServices] = useState<any[]>([]);
   const [inventoryItems, setInventoryItems] = useState<Record<string, any>>({}); // Map of inventoryItemId -> inventory item
   
@@ -511,6 +517,27 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
   useEffect(() => {
     fetchCatalogServices();
     fetchInventoryItems();
+  }, []);
+
+  // Fetch business profile from settings
+  useEffect(() => {
+    const fetchBusinessProfile = async () => {
+      try {
+        const response = await settingsAPI.get();
+        if (response.success && response.data?.workshop) {
+          const workshop = response.data.workshop;
+          setBusinessProfile({
+            name: (workshop.businessName || "MOMENTUM AUTOWORKS").toUpperCase(),
+            address: workshop.address || "",
+            phone: workshop.phone || "+92 300 1234567",
+            email: workshop.email || "info@momentumauto.pk",
+          });
+        }
+      } catch (error) {
+        console.error("Failed to fetch business profile:", error);
+      }
+    };
+    fetchBusinessProfile();
   }, []);
 
   const fetchInventoryItems = async () => {
@@ -4840,6 +4867,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
               day: "numeric",
               hour: "2-digit",
               minute: "2-digit",
+              timeZone: "Asia/Karachi",
             }),
             jobId: jobId || undefined,
             customer: {
@@ -4861,10 +4889,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
             technician: selectedTechnician ? { name: selectedTechnician.name } : undefined,
             totalCost: totalCost,
           }}
-          onShare={(method) => {
-            // Share functionality can be implemented here
-            console.log("Share via", method);
-          }}
+          businessProfile={businessProfile}
         />
       )}
     </>

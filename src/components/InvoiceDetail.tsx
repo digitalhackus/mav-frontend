@@ -301,8 +301,8 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       const pageWidth = doc.internal.pageSize.getWidth();
       let currentY = margin;
 
-      // Set background color (beige)
-      doc.setFillColor(245, 245, 220);
+      // Set background color (white)
+      doc.setFillColor(255, 255, 255);
       doc.rect(0, 0, pageWidth, doc.internal.pageSize.getHeight(), "F");
 
       // INVOICE title - Large red letters on left
@@ -316,8 +316,8 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       doc.setFont("courier", "normal");
       doc.setFontSize(10);
       const invoiceDate = typeof invoice.date === 'string' ? new Date(invoice.date) : new Date(invoice.date);
-      const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-      const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Karachi' });
+      const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' });
       
       // Generate invoice ID from plate number and customer name initials
       const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
@@ -413,9 +413,6 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       doc.text(invoice.paymentMethod.toUpperCase(), paymentColumnX, currentY + 6);
       if (invoice.technician) {
         doc.text(invoice.technician.toUpperCase(), paymentColumnX, currentY + 12);
-      }
-      if (invoice.customerPhone) {
-        doc.text(invoice.customerPhone, paymentColumnX, currentY + 18);
       }
 
       currentY += 30;
@@ -724,7 +721,7 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="max-w-5xl mx-auto">
                   {/* Invoice Document Preview - Same as main view but in modal */}
-                  <Card className="p-8 lg:p-12 bg-[#f5f5dc] print:shadow-none print:border-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  <Card className="p-8 lg:p-12 bg-white print:shadow-none print:border-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                     {/* Header - INVOICE in large red, logo top right */}
                     <div className="flex items-start justify-between mb-10">
                       {/* Left: INVOICE title and details */}
@@ -735,8 +732,8 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                         <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           {(() => {
                             const invoiceDate = typeof currentDate === 'string' ? new Date(currentDate) : new Date(currentDate);
-                            const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-                            const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                            const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Karachi' });
+                            const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' });
                             const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
                             const customerName = invoice.customer || '';
                             const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
@@ -808,9 +805,6 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                           <p className="font-bold">{invoice.paymentMethod.toUpperCase()}</p>
                           {invoice.technician && (
                             <p>{invoice.technician.toUpperCase()}</p>
-                          )}
-                          {invoice.customerPhone && (
-                            <p>{invoice.customerPhone}</p>
                           )}
                         </div>
                       </div>
@@ -1102,7 +1096,7 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
           </div>
 
           {/* Invoice Document - Anonymous Pro Design */}
-          <Card className="p-8 lg:p-12 bg-[#f5f5dc] print:shadow-none print:border-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+          <Card className="p-8 lg:p-12 bg-white print:shadow-none print:border-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
             {/* Header - INVOICE in large red, logo top right */}
             <div className="flex items-start justify-between mb-10">
               {/* Left: INVOICE title and details */}
@@ -1113,8 +1107,8 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                 <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   {(() => {
                     const invoiceDate = typeof currentDate === 'string' ? new Date(currentDate) : new Date(currentDate);
-                    const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-                    const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                    const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Karachi' });
+                    const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' });
                     const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
                     const customerName = invoice.customer || '';
                     const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
@@ -1186,9 +1180,6 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                   <p className="font-bold">{currentPaymentMethod.toUpperCase()}</p>
                   {invoice.technician && (
                     <p>{invoice.technician.toUpperCase()}</p>
-                  )}
-                  {invoice.customerPhone && (
-                    <p>{invoice.customerPhone}</p>
                   )}
                 </div>
               </div>

@@ -1126,8 +1126,8 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       const pageWidth = doc.internal.pageSize.getWidth();
       let currentY = margin;
 
-      // Set background color (beige)
-      doc.setFillColor(245, 245, 220);
+      // Set background color (white)
+      doc.setFillColor(255, 255, 255);
       doc.rect(0, 0, pageWidth, doc.internal.pageSize.getHeight(), "F");
 
       // INVOICE title - Large red letters on left
@@ -1145,10 +1145,12 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         year: "numeric",
         month: "long",
         day: "numeric",
+        timeZone: "Asia/Karachi",
       });
       const timeStr = issueDate.toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
+        timeZone: "Asia/Karachi",
       });
       
       // Generate invoice ID from plate number and customer name initials
@@ -1239,9 +1241,6 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         if (technicianName) {
           doc.text(technicianName.toUpperCase(), paymentColumnX, currentY + 12);
         }
-      }
-      if (selectedCustomer.phone) {
-        doc.text(selectedCustomer.phone, paymentColumnX, currentY + 18);
       }
 
       currentY += 30;
@@ -1385,8 +1384,8 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
       const pageWidth = doc.internal.pageSize.getWidth();
       let currentY = margin;
 
-      // Set background color (beige)
-      doc.setFillColor(245, 245, 220);
+      // Set background color (white)
+      doc.setFillColor(255, 255, 255);
       doc.rect(0, 0, pageWidth, doc.internal.pageSize.getHeight(), "F");
 
       // INVOICE title - Large red letters on left
@@ -1404,10 +1403,12 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         year: "numeric",
         month: "long",
         day: "numeric",
+        timeZone: "Asia/Karachi",
       });
       const timeStr = issueDate.toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
+        timeZone: "Asia/Karachi",
       });
       
       // Generate invoice ID from plate number and customer name initials
@@ -1498,9 +1499,6 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
         if (technicianName) {
           doc.text(technicianName.toUpperCase(), paymentColumnX, currentY + 12);
         }
-      }
-      if (selectedCustomer.phone) {
-        doc.text(selectedCustomer.phone, paymentColumnX, currentY + 18);
       }
 
       currentY += 30;
@@ -3374,10 +3372,13 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
           onOpenChange={setShowInvoicePreview}
           invoiceData={{
             invoiceNumber: invoiceNumber,
-            issueDate: new Date().toLocaleDateString("en-US", {
+            issueDate: new Date().toLocaleString("en-US", {
               year: "numeric",
               month: "short",
               day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+              timeZone: "Asia/Karachi",
             }),
             customer: {
               name: selectedCustomer.name,
@@ -3405,6 +3406,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
             notes: notes,
             terms: terms,
           }}
+          businessProfile={businessProfile}
         />
       )}
     </div>

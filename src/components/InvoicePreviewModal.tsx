@@ -50,6 +50,12 @@ interface InvoicePreviewModalProps {
     notes?: string;
     terms?: string;
   };
+  businessProfile?: {
+    name: string;
+    address: string;
+    phone: string;
+    email: string;
+  };
 }
 
 // Default terms and conditions
@@ -59,37 +65,50 @@ export function InvoicePreviewModal({
   open,
   onOpenChange,
   invoiceData,
+  businessProfile: propBusinessProfile,
 }: InvoicePreviewModalProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [businessProfile, setBusinessProfile] = useState({
     name: "Momentum AutoWorks",
-    address: "123 Auto Street, Workshop City",
+    address: "",
     city: "Punjab, Pakistan",
     phone: "+92 300 1234567",
     email: "info@momentumautoworks.com",
   });
 
-  // Fetch business profile from settings
+  // Use passed business profile or fetch from settings
   useEffect(() => {
-    const fetchBusinessProfile = async () => {
-      try {
-        const response = await settingsAPI.get();
-        if (response.success && response.data?.workshop) {
-          const workshop = response.data.workshop;
-          setBusinessProfile({
-            name: workshop.businessName || "Momentum AutoWorks",
-            address: workshop.address || "123 Auto Street, Workshop City",
-            city: "",
-            phone: workshop.phone || "+92 300 1234567",
-            email: workshop.email || "info@momentumautoworks.com",
-          });
+    if (propBusinessProfile) {
+      // Use the passed business profile
+      setBusinessProfile({
+        name: propBusinessProfile.name || "Momentum AutoWorks",
+        address: propBusinessProfile.address || "",
+        city: "",
+        phone: propBusinessProfile.phone || "+92 300 1234567",
+        email: propBusinessProfile.email || "info@momentumautoworks.com",
+      });
+    } else {
+      // Fetch from settings if not provided
+      const fetchBusinessProfile = async () => {
+        try {
+          const response = await settingsAPI.get();
+          if (response.success && response.data?.workshop) {
+            const workshop = response.data.workshop;
+            setBusinessProfile({
+              name: workshop.businessName || "Momentum AutoWorks",
+              address: workshop.address || "",
+              city: "",
+              phone: workshop.phone || "+92 300 1234567",
+              email: workshop.email || "info@momentumautoworks.com",
+            });
+          }
+        } catch (error) {
+          console.error("Failed to fetch business profile:", error);
         }
-      } catch (error) {
-        console.error("Failed to fetch business profile:", error);
-      }
-    };
-    fetchBusinessProfile();
-  }, []);
+      };
+      fetchBusinessProfile();
+    }
+  }, [propBusinessProfile]);
 
   const loadLogoAsDataUrl = async (): Promise<string | null> => {
     try {
@@ -120,8 +139,8 @@ export function InvoicePreviewModal({
       const pageWidth = doc.internal.pageSize.getWidth();
       let currentY = margin;
 
-      // Set background color (beige)
-      doc.setFillColor(245, 245, 220);
+      // Set background color (white)
+      doc.setFillColor(255, 255, 255);
       doc.rect(0, 0, pageWidth, doc.internal.pageSize.getHeight(), "F");
 
       // INVOICE title - Large red letters on left
@@ -135,8 +154,8 @@ export function InvoicePreviewModal({
       doc.setFont("courier", "normal");
       doc.setFontSize(10);
       const invoiceDate = new Date(invoiceData.issueDate);
-      const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-      const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Karachi' });
+      const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' });
       
       // Generate invoice ID from plate number and customer name initials
       const plateNo = invoiceData.vehicle?.plateNo || invoiceData.vehicle?.plate || '';
@@ -219,9 +238,6 @@ export function InvoicePreviewModal({
       doc.text("CASH", paymentColumnX, currentY + 6); // Default to CASH for preview
       if (invoiceData.technician?.name) {
         doc.text(invoiceData.technician.name.toUpperCase(), paymentColumnX, currentY + 12);
-      }
-      if (invoiceData.customer.phone) {
-        doc.text(invoiceData.customer.phone, paymentColumnX, currentY + 18);
       }
 
       currentY += 30;
@@ -400,11 +416,11 @@ export function InvoicePreviewModal({
     const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
     const invoiceId = plateNo && initials ? `${plateNo}-${initials}` : invoiceData.invoiceNumber;
     const invoiceDate = new Date(invoiceData.issueDate);
-    const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-    const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Karachi' });
+    const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' });
 
     return `
-      <div class="invoice-preview" style="background-color: #f5f5dc; padding: 50px; font-family: 'Courier New', monospace; min-height: 297mm; box-sizing: border-box;">
+      <div class="invoice-preview" style="background-color: #ffffff; padding: 50px; font-family: 'Courier New', monospace; min-height: 297mm; box-sizing: border-box;">
         <div class="invoice-header" style="display: flex; justify-content: space-between; margin-bottom: 40px;">
           <div class="invoice-header-left">
             <h1 style="font-size: 56px; font-weight: bold; color: #c53032; margin: 0 0 15px 0; font-family: Helvetica, Arial, sans-serif;">INVOICE</h1>
@@ -432,7 +448,6 @@ export function InvoicePreviewModal({
             <div style="font-weight: bold; font-size: 18px; font-family: Helvetica, Arial, sans-serif; margin-bottom: 8px;">Payment Method</div>
             <p style="margin: 4px 0; font-size: 16px;">CASH</p>
             ${invoiceData.technician?.name ? `<p style="margin: 4px 0; font-size: 16px;">${invoiceData.technician.name.toUpperCase()}</p>` : ""}
-            ${invoiceData.customer.phone ? `<p style="margin: 4px 0; font-size: 16px;">${invoiceData.customer.phone}</p>` : ""}
           </div>
         </div>
 
@@ -503,7 +518,7 @@ export function InvoicePreviewModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-auto p-4 bg-slate-200 min-h-0">
+        <div className="flex-1 overflow-auto p-4 bg-slate-100 min-h-0">
           <div 
             className="shadow-lg mx-auto"
             style={{

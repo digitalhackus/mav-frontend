@@ -3372,14 +3372,7 @@ export function AddInvoice({ onClose, onSubmit, userRole = "Admin" }: AddInvoice
           onOpenChange={setShowInvoicePreview}
           invoiceData={{
             invoiceNumber: invoiceNumber,
-            issueDate: new Date().toLocaleString("en-US", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-              timeZone: "Asia/Karachi",
-            }),
+            issueDate: new Date().toISOString(),
             customer: {
               name: selectedCustomer.name,
               phone: selectedCustomer.phone,

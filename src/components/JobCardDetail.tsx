@@ -4861,14 +4861,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
               }
               return jobId ? `INV-${jobId.toString().padStart(3, "0")}` : formatInvoiceId({ _id: Date.now().toString() });
             })(),
-            issueDate: new Date().toLocaleString("en-US", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-              timeZone: "Asia/Karachi",
-            }),
+            issueDate: new Date().toISOString(),
             jobId: jobId || undefined,
             customer: {
               name: selectedCustomer.name,

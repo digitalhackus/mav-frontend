@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -44,6 +45,7 @@ interface CustomersProps {
 }
 
 export function Customers({ onNavigate }: CustomersProps = {}) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
@@ -100,6 +102,20 @@ export function Customers({ onNavigate }: CustomersProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm]);
 
+  // Check for ID in URL params and open customer profile
+  useEffect(() => {
+    const customerId = searchParams.get('id');
+    if (customerId && customers.length > 0) {
+      const customer = customers.find(c => (c._id || c.id) === customerId);
+      if (customer) {
+        setSelectedCustomer(customer);
+        // Clean up URL
+        setSearchParams({});
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, customers]);
+
   const filteredCustomers = [...customers]
     .sort((a, b) => {
       try {
@@ -127,6 +143,7 @@ export function Customers({ onNavigate }: CustomersProps = {}) {
 
   const handleCloseProfile = () => {
     setSelectedCustomer(null);
+    setSearchParams({});
     // Update URL to remove customer view from history
     if (window.history.length > 1) {
       window.history.back();
@@ -178,6 +195,7 @@ export function Customers({ onNavigate }: CustomersProps = {}) {
           handleDeleteClick(selectedCustomer, { stopPropagation: () => {} } as React.MouseEvent);
           handleCloseProfile();
         }}
+        onNavigate={onNavigate}
       />
     );
   }

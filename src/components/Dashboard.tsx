@@ -15,14 +15,17 @@ import {
   NotebookPen,
   Loader2
 } from "lucide-react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Badge } from "./ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Label } from "./ui/label";
 import { motion } from "motion/react";
-import { dashboardAPI, jobsAPI, customersAPI } from "../api/client";
+import { dashboardAPI, jobsAPI, customersAPI, reportsAPI } from "../api/client";
 import { connectSocket, onJobUpdated, onInvoiceUpdated } from "../lib/socket";
 import { formatCurrency } from "../utils/currency";
+import { getPSTDate, getCurrentWeekDates } from "../utils/dateUtils";
 import { useThemeStyles } from "../hooks/useThemeStyles";
+import { formatJobId } from "../utils/idFormatter";
 
 interface DashboardProps {
   onNavigate?: (page: string) => void;
@@ -50,6 +53,7 @@ const formatStatus = (status: string) => {
   return statusMap[status] || status;
 };
 
+
 export function Dashboard({ onNavigate }: DashboardProps = {}) {
   const [isCustomerDialogOpen, setIsCustomerDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -57,6 +61,8 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
   const [summary, setSummary] = useState<any>(null);
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
   const [avgTime, setAvgTime] = useState<number>(0);
+  const [weeklyData, setWeeklyData] = useState<any[]>([]);
+  const [dateRange, setDateRange] = useState<number>(7); // Default to 7 days
   const { getButtonStyle } = useThemeStyles();
 
   const fetchDashboardData = async () => {
@@ -64,9 +70,14 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
       setLoading(true);
       setError("");
       
-      const [summaryData, jobsData] = await Promise.all([
-        dashboardAPI.getSummary(),
-        jobsAPI.getAll()
+      // Get current week dates in PST
+      const weekDates = getCurrentWeekDates();
+      
+      // Request data based on selected date range
+      const [summaryData, jobsData, dailyPerformanceData] = await Promise.all([
+        dashboardAPI.getSummary(dateRange),
+        jobsAPI.getAll(),
+        reportsAPI.getDailyPerformance(dateRange) // Get data for selected date range
       ]);
 
       if (summaryData.success) {
@@ -80,15 +91,17 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           .slice(0, 4);
         setRecentJobs(sorted);
 
-        // Calculate average time for today's jobs
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
+        // Calculate average time for today's jobs (using PST)
+        const pstNow = getPSTDate();
+        pstNow.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(pstNow);
         tomorrow.setDate(tomorrow.getDate() + 1);
 
         const todayJobs = jobsData.data.filter((job: any) => {
           const jobDate = new Date(job.createdAt);
-          return jobDate >= today && jobDate < tomorrow && job.estimatedTimeHours;
+          // Convert job date to PST for comparison
+          const jobPST = new Date(jobDate.getTime() + (jobDate.getTimezoneOffset() * 60000) + (5 * 3600000));
+          return jobPST >= pstNow && jobPST < tomorrow && job.estimatedTimeHours;
         });
 
         if (todayJobs.length > 0) {
@@ -98,6 +111,48 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
         } else {
           setAvgTime(0);
         }
+      }
+
+      // Map weekly data to current week dates
+      if (dailyPerformanceData.success && dailyPerformanceData.data) {
+        const mappedWeeklyData = weekDates.map(weekDay => {
+          // Find matching data for this day
+          // Backend returns dates in YYYY-MM-DD format (PKT-based from backend conversion)
+          // Match by direct date string comparison - both are in PKT (YYYY-MM-DD format)
+          const matchingData = dailyPerformanceData.data.find((item: any) => {
+            if (!item.date) return false;
+            
+            // Backend date is already in PKT format (YYYY-MM-DD)
+            const itemDateStr = typeof item.date === 'string' ? item.date.split('T')[0] : item.date;
+            
+            // Direct comparison - both dates are in PKT format
+            return itemDateStr === weekDay.isoDate;
+          });
+
+          return {
+            day: weekDay.dayLabel, // e.g., "Mon Dec 2"
+            dayShort: weekDay.dayName, // e.g., "Mon"
+            date: weekDay.dateStr, // e.g., "Dec 2"
+            isoDate: weekDay.isoDate,
+            revenue: matchingData?.revenue || 0,
+            jobs: matchingData?.jobs || 0,
+            dateObj: weekDay.date
+          };
+        });
+
+        setWeeklyData(mappedWeeklyData);
+      } else {
+        // If API fails, create empty data for the week
+        const emptyWeeklyData = weekDates.map(weekDay => ({
+          day: weekDay.dayLabel,
+          dayShort: weekDay.dayName,
+          date: weekDay.dateStr,
+          isoDate: weekDay.isoDate,
+          revenue: 0,
+          jobs: 0,
+          dateObj: weekDay.date
+        }));
+        setWeeklyData(emptyWeeklyData);
       }
     } catch (err: any) {
       setError(err.message || "Failed to load dashboard data");
@@ -125,18 +180,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
       unsubscribeJob();
       unsubscribeInvoice();
     };
-  }, []);
-
-  // Generate chart data from summary (placeholder - you can enhance this with historical data)
-  const salesData = [
-    { day: "Mon", revenue: 0, jobs: 0 },
-    { day: "Tue", revenue: 0, jobs: 0 },
-    { day: "Wed", revenue: 0, jobs: 0 },
-    { day: "Thu", revenue: 0, jobs: 0 },
-    { day: "Fri", revenue: summary?.todayRevenue || 0, jobs: summary?.todayJobs || 0 },
-    { day: "Sat", revenue: 0, jobs: 0 },
-    { day: "Sun", revenue: 0, jobs: 0 },
-  ];
+  }, [dateRange]); // Refetch when date range changes
 
   if (loading) {
     return (
@@ -183,7 +227,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
             variant="outline"
             className="w-full sm:w-auto lg:flex-none"
             size="sm"
-            onClick={() => onNavigate && onNavigate("create-invoice")}
+            onClick={() => onNavigate && onNavigate("invoices?tab=create")}
           >
             <NotebookPen className="h-4 w-4 lg:mr-2" />
             <span className="hidden lg:inline">Create Invoice</span>
@@ -229,40 +273,36 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
         </div>
       </div>
 
-      {/* Today's Performance */}
-      <motion.div 
-        className="relative rounded-xl overflow-hidden bg-slate-900 border border-slate-800"
+      {/* Date Range Selector */}
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        transition={{ duration: 0.3 }}
       >
-        <div className="p-5 sm:p-6 lg:p-8">
-          <div className="mb-6">
-            <h2 className="text-xl lg:text-2xl text-white mb-1">Today's Performance</h2>
-          </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
-            <div className="space-y-2">
-              <p className="text-sm font-medium uppercase tracking-[0.08em] text-slate-300">Total Revenue</p>
-              <p className="text-3xl sm:text-4xl font-semibold tracking-tight text-white">
-                <span className="text-lg sm:text-xl font-normal mr-1.5" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', letterSpacing: '0.02em' }}>Rs</span>
-                <span>{summary?.todayRevenue?.toLocaleString() || 0}</span>
-              </p>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Performance Overview</h3>
+                <p className="text-sm text-gray-600 mt-1">Select a date range to view performance metrics</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <Label htmlFor="date-range" className="text-sm text-gray-600">Date Range:</Label>
+                <Select value={dateRange.toString()} onValueChange={(value) => setDateRange(parseInt(value))}>
+                  <SelectTrigger id="date-range" className="w-[180px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="7">Last 7 days</SelectItem>
+                    <SelectItem value="14">Last 14 days</SelectItem>
+                    <SelectItem value="30">Last 30 days</SelectItem>
+                    <SelectItem value="90">Last 90 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium uppercase tracking-[0.08em] text-slate-300">Jobs Today</p>
-              <p className="text-3xl sm:text-4xl font-semibold tracking-tight text-white">
-                {summary?.todayJobs || 0}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium uppercase tracking-[0.08em] text-slate-300">Avg. Time</p>
-              <p className="text-3xl sm:text-4xl font-semibold tracking-tight text-white">
-                {avgTime > 0 ? `${avgTime}h` : '0h'}
-              </p>
-            </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       </motion.div>
 
       {/* Stats Cards */}
@@ -272,9 +312,12 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
         >
-          <Card className="border-l-4 border-[#c53032] h-full">
+          <Card 
+            className="border-l-4 border-[#c53032] h-full cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => onNavigate && onNavigate("reports?period=week")}
+          >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm text-gray-600">Weekly Revenue</CardTitle>
+              <CardTitle className="text-sm text-gray-600">Revenue</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
                 <Coins className="h-5 w-5 text-[#c53032]" />
               </div>
@@ -282,11 +325,11 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
             <CardContent>
               <div className="text-3xl mb-1">
                 <span className="text-lg font-normal mr-1" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', letterSpacing: '0.02em' }}>Rs</span>
-                <span className="font-semibold">{summary?.todayRevenue?.toLocaleString() || 0}</span>
+                <span className="font-semibold">{summary?.periodRevenue?.toLocaleString() || 0}</span>
               </div>
               <div className="flex items-center text-sm text-[#c53032]">
                 <ArrowUpRight className="h-4 w-4 mr-1" />
-                <span>Today's revenue</span>
+                <span>Last {dateRange} days</span>
               </div>
             </CardContent>
           </Card>
@@ -297,7 +340,10 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-          <Card className="border-l-4 border-l-[#d94848] h-full">
+          <Card 
+            className="border-l-4 border-l-[#d94848] h-full cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => onNavigate && onNavigate("job-cards")}
+          >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm text-gray-600">Jobs in Progress</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
@@ -319,7 +365,10 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
         >
-          <Card className="border-l-4 border-l-[#e15b5b] h-full">
+          <Card 
+            className="border-l-4 border-l-[#e15b5b] h-full cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => onNavigate && onNavigate("job-cards")}
+          >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm text-gray-600">Completed Today</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
@@ -327,7 +376,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl mb-1">{summary?.jobsByStatus?.COMPLETED || 0}</div>
+              <div className="text-3xl mb-1">{summary?.completedToday || 0}</div>
               <div className="flex items-center text-sm text-[#e15b5b]">
                 <TrendingUp className="h-4 w-4 mr-1" />
                 <span>Completed jobs</span>
@@ -341,7 +390,10 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
         >
-          <Card className="border-l-4 border-l-[#f87171] h-full">
+          <Card 
+            className="border-l-4 border-l-[#f87171] h-full cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => onNavigate && onNavigate("customers")}
+          >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm text-gray-600">Active Customers</CardTitle>
               <div className="p-2 bg-[#fde7e7] rounded-lg">
@@ -357,43 +409,6 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
             </CardContent>
           </Card>
         </motion.div>
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader className="space-y-1">
-            <CardTitle>Revenue Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent className="h-64 sm:h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={salesData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="day" />
-                <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="revenue" stroke="#c53032" strokeWidth={3} dot={{ fill: "#c53032", r: 5 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="space-y-1">
-            <CardTitle>Jobs Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent className="h-64 sm:h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={salesData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="day" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="jobs" fill="#c53032" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Recent Jobs */}
@@ -420,7 +435,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
                   <div key={job._id} className="p-4 border rounded-lg space-y-2">
                     <div className="flex items-start justify-between">
                       <div>
-                        <p className="font-medium">ID: {job._id.slice(-6)}</p>
+                        <p className="font-medium">ID: {formatJobId(job)}</p>
                         <p className="text-sm text-gray-600">{job.customer?.name || 'N/A'}</p>
                       </div>
                       <Badge 
@@ -464,7 +479,7 @@ export function Dashboard({ onNavigate }: DashboardProps = {}) {
                   <TableBody>
                     {recentJobs.map((job) => (
                       <TableRow key={job._id}>
-                        <TableCell className="font-medium">{job._id.slice(-6)}</TableCell>
+                        <TableCell className="font-medium">{formatJobId(job)}</TableCell>
                         <TableCell>{job.customer?.name || 'N/A'}</TableCell>
                         <TableCell>{job.vehicle?.make || 'N/A'}</TableCell>
                         <TableCell>{job.vehicle?.model} {job.vehicle?.year}</TableCell>

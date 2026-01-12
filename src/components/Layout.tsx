@@ -25,11 +25,14 @@ import {
   Menu,
   X,
   LogOut,
-  ChevronDown
+  ChevronDown,
+  Package
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Toaster } from "./ui/sonner";
 import { useTheme } from "../contexts/ThemeContext";
+import { GlobalSearch } from "./GlobalSearch";
+import { useAuth } from "../contexts/AuthContext";
 
 interface LayoutProps {
   children: ReactNode;
@@ -44,6 +47,7 @@ const menuItems = [
   { id: "vehicles", label: "Vehicles", icon: Car },
   { id: "invoices", label: "Invoices", icon: NotebookPen },
   { id: "job-cards", label: "Job Cards", icon: Wrench },
+  { id: "inventory", label: "Inventory", icon: Package },
   { id: "reports", label: "Reports", icon: BarChart3 },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "settings", label: "Settings", icon: Settings },
@@ -52,6 +56,18 @@ const menuItems = [
 export function Layout({ children, currentPage, onNavigate, onLogout }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { themeColor } = useTheme();
+  const { user } = useAuth();
+  
+  // Format role for display
+  const getRoleDisplayName = (role: string | undefined) => {
+    if (!role) return "User";
+    const roleMap: Record<string, string> = {
+      "Admin": "Workshop Manager",
+      "Supervisor": "Supervisor",
+      "Technician": "Technician"
+    };
+    return roleMap[role] || role;
+  };
 
   const NavigationItems = () => (
     <>
@@ -136,13 +152,7 @@ export function Layout({ children, currentPage, onNavigate, onLogout }: LayoutPr
 
             {/* Search Bar - Desktop */}
             <div className="hidden lg:flex items-center gap-4 flex-1 max-w-xl">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Search products, customers, invoices..."
-                  className="pl-10"
-                />
-              </div>
+              <GlobalSearch onNavigate={onNavigate} />
             </div>
 
             {/* User Profile */}
@@ -150,8 +160,8 @@ export function Layout({ children, currentPage, onNavigate, onLogout }: LayoutPr
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2 lg:gap-3 hover:bg-gray-50 rounded-lg px-2 py-1.5 transition-colors cursor-pointer">
                   <div className="hidden md:block text-right">
-                    <p className="text-sm font-medium">Admin User</p>
-                    <p className="text-xs text-gray-500">Workshop Manager</p>
+                    <p className="text-sm font-medium">{user?.name || "User"}</p>
+                    <p className="text-xs text-gray-500">{getRoleDisplayName(user?.role)}</p>
                   </div>
                   <Avatar className="h-8 w-8 lg:h-10 lg:w-10">
                     <AvatarFallback className="bg-red-600">
@@ -164,8 +174,8 @@ export function Layout({ children, currentPage, onNavigate, onLogout }: LayoutPr
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-medium">Admin User</p>
-                    <p className="text-xs text-gray-500">Workshop Manager</p>
+                    <p className="text-sm font-medium">{user?.name || "User"}</p>
+                    <p className="text-xs text-gray-500">{getRoleDisplayName(user?.role)}</p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />

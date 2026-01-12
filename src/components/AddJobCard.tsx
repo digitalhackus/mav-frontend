@@ -47,6 +47,7 @@ import {
 } from "./ui/dialog";
 import { AddCustomer } from "./AddCustomer";
 import { customersAPI, vehiclesAPI } from "../api/client";
+import { formatCustomerId } from "../utils/idFormatter";
 
 interface AddJobCardProps {
   onClose?: () => void;
@@ -360,7 +361,7 @@ export function AddJobCard({ onClose, onSubmit }: AddJobCardProps) {
                                 {customer.email && (
                                   <span className="text-xs text-gray-400">{customer.email}</span>
                                 )}
-                                <span className="text-xs text-gray-400 mt-0.5">ID: {(customer._id || customer.id).slice(-6)}</span>
+                                <span className="text-xs text-gray-400 mt-0.5">ID: {formatCustomerId(customer)}</span>
                               </div>
                             </CommandItem>
                             );

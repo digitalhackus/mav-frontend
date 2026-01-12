@@ -14,36 +14,33 @@ import {
   DialogTrigger,
 } from "./ui/dialog";
 import { Label } from "./ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { 
   ArrowLeft,
   Printer, 
   Download, 
   Mail,
-  Edit,
   CheckCircle2,
   Clock,
   AlertCircle,
-  User,
-  Car,
   Calendar,
   Banknote,
   CreditCard,
   Smartphone,
-  UserCog,
-  Building2,
-  Phone,
-  MapPin,
-  Globe,
-  Hash,
   FileText,
-  Send,
-  CheckCircle,
   Share2,
   MessageCircle,
   X,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { settingsAPI } from "../api/client";
 
 interface InvoiceDetailProps {
   invoice: {
@@ -85,32 +82,32 @@ interface InvoiceDetailProps {
     terms?: string;
   };
   onClose?: () => void;
-  onEdit?: () => void;
+  onEdit?: (data: any) => void;
 }
 
-// Mock business profile data (would come from Settings → Business Profile)
-const businessProfile = {
-  name: "MOMENTUM AUTOWORKS",
-  tagline: "Premium Auto Care & Service",
-  address: "House 123, Street 45, Soan Garden",
-  city: "Islamabad",
-  state: "Federal",
-  country: "Pakistan",
-  phone: "+92 300 1234567",
-  email: "info@momentumauto.pk",
-  website: "www.momentumauto.pk",
-  taxId: "NTN-1234567",
-  logo: null, // Would be uploaded in Business Profile settings
-};
+// Default terms and conditions
+const DEFAULT_TERMS = "Payment is due immediately upon receipt. No credit is extended under any circumstances.\nQuoted rates are valid for 5 days only and may change thereafter.";
 
 export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) {
-  const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
-  const [emailTo, setEmailTo] = useState(invoice.customerEmail || "");
-  const [emailSubject, setEmailSubject] = useState(`Invoice INV-${invoice.id.padStart(3, '0')} from ${businessProfile.name}`);
-  const [emailMessage, setEmailMessage] = useState(`Dear ${invoice.customer},\n\nPlease find attached your invoice for the recent service at ${businessProfile.name}.\n\nThank you for your business!`);
+  const [businessProfile, setBusinessProfile] = useState({
+    name: "MOMENTUM AUTOWORKS",
+    tagline: "Premium Auto Care & Service",
+    address: "",
+    city: "",
+    state: "",
+    country: "",
+    phone: "+92 300 1234567",
+    email: "info@momentumauto.pk",
+    website: "www.momentumauto.pk",
+    taxId: "NTN-1234567",
+    logo: null,
+  });
 
+  // Edit mode state
+  const [isEditMode, setIsEditMode] = useState(false);
+  
   // Editable fields state
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [isEditingTerms, setIsEditingTerms] = useState(false);
@@ -118,14 +115,44 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
   const [editedNotes, setEditedNotes] = useState(invoice.notes || "");
   const [editedTerms, setEditedTerms] = useState(invoice.terms || "");
   const [editedFooter, setEditedFooter] = useState("Thank you for your business! For any questions regarding this invoice, please contact us.");
-
+  
   // Calculate totals if items exist
-  const items = invoice.items || [
+  const defaultItems = invoice.items || [
     { name: "Oil Change", description: "Full synthetic oil + filter replacement", quantity: 1, unitPrice: 3500, tax: 630 },
     { name: "Brake Pad Replacement", description: "Front brake pads - ceramic", quantity: 1, unitPrice: 6800, tax: 1224 },
     { name: "General Inspection", description: "Complete vehicle inspection", quantity: 1, unitPrice: 500, tax: 90 },
     { name: "Labor Charges", description: "Technician service time", quantity: 2, unitPrice: 1500, tax: 270 },
   ];
+  const items = invoice.items || defaultItems;
+  
+  // Helper function to convert backend status to display status
+  const getDisplayStatus = (backendStatus: string): "Draft" | "Unpaid" | "Paid" => {
+    if (backendStatus === "Paid") return "Paid";
+    if (backendStatus === "Pending") {
+      // Check if invoice was created recently (within 24 hours) - consider it Draft
+      const invoiceDate = new Date(invoice.date || Date.now());
+      const now = new Date();
+      const hoursDiff = (now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60);
+      if (hoursDiff < 24 && !invoice.paymentMethod) {
+        return "Draft";
+      }
+      return "Unpaid";
+    }
+    return "Unpaid"; // Default for cancelled or other statuses
+  };
+
+  // Helper function to convert display status to backend status
+  const getBackendStatus = (displayStatus: "Draft" | "Unpaid" | "Paid"): string => {
+    if (displayStatus === "Paid") return "Paid";
+    return "Pending"; // Draft and Unpaid both map to Pending
+  };
+
+  // Editable invoice fields
+  const [editedDate, setEditedDate] = useState(invoice.date || "");
+  const [editedStatus, setEditedStatus] = useState<"Draft" | "Unpaid" | "Paid">(getDisplayStatus(invoice.status || "Pending"));
+  const [editedPaymentMethod, setEditedPaymentMethod] = useState(invoice.paymentMethod || "Cash");
+  const [editedItems, setEditedItems] = useState(items);
+  const [editedDiscount, setEditedDiscount] = useState(invoice.discount || 0);
 
   const taxRate = invoice.taxRate || 0.18; // 18% default
   
@@ -135,34 +162,113 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
   // Helper function to get item name (handles both old and new format)
   const getItemName = (item: any) => item.name ?? item.description ?? "Service";
   
-  const subtotal = invoice.subtotal || items.reduce((sum, item) => sum + (getItemPrice(item) * item.quantity), 0);
-  const taxAmount = invoice.tax || items.reduce((sum, item) => {
+  // Use edited values when in edit mode
+  const currentItems = isEditMode ? editedItems : items;
+  const currentDate = isEditMode ? editedDate : invoice.date;
+  const currentStatus = isEditMode ? editedStatus : getDisplayStatus(invoice.status || "Pending");
+  const currentPaymentMethod = isEditMode ? editedPaymentMethod : invoice.paymentMethod;
+  const currentDiscount = isEditMode ? editedDiscount : (invoice.discount || 0);
+  
+  const subtotal = invoice.subtotal || currentItems.reduce((sum, item) => sum + (getItemPrice(item) * item.quantity), 0);
+  const taxAmount = invoice.tax || currentItems.reduce((sum, item) => {
     const itemPrice = getItemPrice(item);
     return sum + (item.tax || (itemPrice * item.quantity * taxRate));
   }, 0);
-  const discount = invoice.discount || 0;
+  const discount = currentDiscount;
   const total = invoice.amount || (subtotal - discount + taxAmount);
-
-  const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
-      case "paid":
-        return <CheckCircle2 className="h-4 w-4" />;
-      case "pending":
-        return <Clock className="h-4 w-4" />;
-      default:
-        return <AlertCircle className="h-4 w-4" />;
-    }
+  
+  // Fetch business profile from settings
+  useEffect(() => {
+    const fetchBusinessProfile = async () => {
+      try {
+        const response = await settingsAPI.get();
+        if (response.success && response.data?.workshop) {
+          const workshop = response.data.workshop;
+          setBusinessProfile({
+            name: (workshop.businessName || "MOMENTUM AUTOWORKS").toUpperCase(),
+            tagline: "Premium Auto Care & Service",
+            address: workshop.address || "",
+            city: "",
+            state: "",
+            country: "",
+            phone: workshop.phone || "+92 300 1234567",
+            email: workshop.email || "info@momentumauto.pk",
+            website: "www.momentumauto.pk",
+            taxId: workshop.taxRegistration || "NTN-1234567",
+            logo: workshop.logo || null,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to fetch business profile:", error);
+      }
+    };
+    fetchBusinessProfile();
+  }, []);
+  
+  // Handle edit mode actions
+  const handleEdit = () => {
+    setIsEditMode(true);
+  };
+  
+  const handleSave = () => {
+    if (!onEdit) return;
+    
+    // Calculate updated totals
+    const updatedSubtotal = currentItems.reduce((sum, item) => sum + (getItemPrice(item) * item.quantity), 0);
+    const updatedTax = currentItems.reduce((sum, item) => {
+      const itemPrice = getItemPrice(item);
+      return sum + (item.tax || (itemPrice * item.quantity * taxRate));
+    }, 0);
+    const updatedTotal = updatedSubtotal + updatedTax - currentDiscount;
+    
+    // Prepare update data - convert display status to backend status
+    const updateData = {
+      date: currentDate,
+      status: getBackendStatus(currentStatus),
+      paymentMethod: currentPaymentMethod,
+      items: currentItems.map(item => ({
+        description: getItemName(item),
+        quantity: item.quantity,
+        price: getItemPrice(item),
+      })),
+      subtotal: updatedSubtotal,
+      tax: updatedTax,
+      discount: currentDiscount,
+      amount: updatedTotal,
+      notes: editedNotes,
+      terms: editedTerms,
+    };
+    
+    onEdit(updateData);
+    setIsEditMode(false);
+  };
+  
+  const handleCancel = () => {
+    // Reset to original values
+    setEditedDate(invoice.date || "");
+    setEditedStatus(getDisplayStatus(invoice.status || "Pending"));
+    setEditedPaymentMethod(invoice.paymentMethod || "Cash");
+    setEditedItems(items);
+    setEditedDiscount(invoice.discount || 0);
+    setEditedNotes(invoice.notes || "");
+    setEditedTerms(invoice.terms || "");
+    setIsEditMode(false);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case "paid":
-        return "bg-green-100 text-green-700 border-green-200";
-      case "pending":
-        return "bg-orange-100 text-orange-700 border-orange-200";
-      default:
-        return "bg-red-100 text-red-700 border-red-200";
-    }
+  const getStatusIcon = (status: "Draft" | "Unpaid" | "Paid" | string) => {
+    const statusLower = status.toLowerCase();
+    if (statusLower === "paid") return <CheckCircle2 className="h-4 w-4" />;
+    if (statusLower === "draft") return <FileText className="h-4 w-4" />;
+    if (statusLower === "unpaid" || statusLower === "pending") return <Clock className="h-4 w-4" />;
+    return <AlertCircle className="h-4 w-4" />;
+  };
+
+  const getStatusColor = (status: "Draft" | "Unpaid" | "Paid" | string) => {
+    const statusLower = status.toLowerCase();
+    if (statusLower === "paid") return "bg-green-100 text-green-700 border-green-200";
+    if (statusLower === "draft") return "bg-yellow-100 text-yellow-700 border-yellow-200";
+    if (statusLower === "unpaid" || statusLower === "pending") return "bg-orange-100 text-orange-700 border-orange-200";
+    return "bg-red-100 text-red-700 border-red-200";
   };
 
   const getPaymentIcon = (method: string) => {
@@ -183,14 +289,20 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
   };
 
   const handleDownloadPDF = async () => {
+    // Only allow download for paid invoices
+    if (invoice.status !== "Paid") {
+      alert("Only paid invoices can be downloaded.");
+      return;
+    }
+    
     try {
       const doc = new jsPDF("p", "mm", "a4");
       const margin = 20;
       const pageWidth = doc.internal.pageSize.getWidth();
       let currentY = margin;
 
-      // Set background color (beige)
-      doc.setFillColor(245, 245, 220);
+      // Set background color (white)
+      doc.setFillColor(255, 255, 255);
       doc.rect(0, 0, pageWidth, doc.internal.pageSize.getHeight(), "F");
 
       // INVOICE title - Large red letters on left
@@ -200,30 +312,50 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       doc.text("INVOICE", margin, currentY + 20);
       doc.setTextColor(0, 0, 0);
 
-      // Invoice details on left below INVOICE
+      // Invoice details on left below INVOICE - date, time, and invoice ID
       doc.setFont("courier", "normal");
       doc.setFontSize(10);
-      doc.text(`INVOICE NUMBER: #${invoice.id.padStart(4, '0')}`, margin, currentY + 30);
-      const invoiceDate = typeof invoice.date === 'string' ? invoice.date : new Date(invoice.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-      doc.text(`DATE: ${invoiceDate.toUpperCase()}`, margin, currentY + 36);
-      doc.text(`DUE DATE: ${invoiceDate.toUpperCase()}`, margin, currentY + 42);
+      const invoiceDate = typeof invoice.date === 'string' ? new Date(invoice.date) : new Date(invoice.date);
+      const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Karachi' });
+      const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' });
+      
+      // Generate invoice ID from plate number and customer name initials
+      const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
+      const customerName = invoice.customer || '';
+      const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+      const invoiceId = (plateNo && initials) ? `${plateNo}-${initials}` : `INV-${invoice.id.padStart(6, '0')}`;
+      
+      doc.text(`DATE: ${dateStr.toUpperCase()}`, margin, currentY + 30);
+      doc.text(`TIME: ${timeStr.toUpperCase()}`, margin, currentY + 36);
+      if (invoiceId) {
+        doc.text(`INVOICE ID: ${invoiceId.toUpperCase()}`, margin, currentY + 42);
+      }
 
-      // Logo and company address on right - Use original resolution
+      // Logo and company address on right - Use original resolution, perfect square
       let logoHeight = 30; // Default height for placeholder
       const logoDataUrl = await loadLogoAsDataUrl();
       if (logoDataUrl) {
         // Load image to get original dimensions
         const img = new Image();
-        img.src = logoDataUrl;
-        await new Promise((resolve) => {
-          img.onload = resolve;
+        await new Promise((resolve, reject) => {
+          img.onload = () => resolve(null);
+          img.onerror = reject;
+          img.src = logoDataUrl;
         });
         
-        // Calculate size maintaining aspect ratio (max 30mm height)
-        const maxHeight = 30;
-        const aspectRatio = img.width / img.height;
-        logoHeight = maxHeight;
-        const logoWidth = logoHeight * aspectRatio;
+        // Calculate size to fit in a square container (30x30mm) while maintaining aspect ratio
+        const containerSize = 30;
+        const imgAspect = img.width / img.height;
+        let logoWidth = containerSize;
+        logoHeight = containerSize;
+        
+        if (imgAspect > 1) {
+          // Image is wider than tall - fit to width, center vertically
+          logoHeight = containerSize / imgAspect;
+        } else {
+          // Image is taller than wide or square - fit to height, center horizontally
+          logoWidth = containerSize * imgAspect;
+        }
         
         // Position logo top right
         const logoX = pageWidth - margin - logoWidth;
@@ -245,9 +377,16 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       const addressStartY = currentY + logoHeight + 5; // 5mm spacing below logo
       doc.setFont("courier", "normal");
       doc.setFontSize(10);
-      doc.text(businessProfile.address.toUpperCase(), pageWidth - margin, addressStartY, { align: "right" });
-      doc.text(businessProfile.city.toUpperCase(), pageWidth - margin, addressStartY + 6, { align: "right" });
-      doc.text(businessProfile.phone, pageWidth - margin, addressStartY + 12, { align: "right" });
+      if (businessProfile.address) {
+        // Split address into lines if it contains newlines or is long
+        const addressLines = businessProfile.address.split('\n').filter(line => line.trim());
+        addressLines.forEach((line, index) => {
+          doc.text(line.toUpperCase(), pageWidth - margin, addressStartY + (index * 6), { align: "right" });
+        });
+        doc.text(businessProfile.phone, pageWidth - margin, addressStartY + (addressLines.length * 6), { align: "right" });
+      } else {
+        doc.text(businessProfile.phone, pageWidth - margin, addressStartY, { align: "right" });
+      }
 
       currentY += 50;
 
@@ -274,9 +413,6 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       doc.text(invoice.paymentMethod.toUpperCase(), paymentColumnX, currentY + 6);
       if (invoice.technician) {
         doc.text(invoice.technician.toUpperCase(), paymentColumnX, currentY + 12);
-      }
-      if (invoice.customerPhone) {
-        doc.text(invoice.customerPhone, paymentColumnX, currentY + 18);
       }
 
       currentY += 30;
@@ -324,8 +460,17 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       // Totals section - Right aligned, monospace with proper formatting
       const tableFinalY = (doc as any).lastAutoTable?.finalY ?? currentY + 20;
       const summaryX = pageWidth - margin;
-      const summaryStartY = tableFinalY + 10;
+      let summaryStartY = tableFinalY + 10;
       const labelWidth = 40;
+      
+      // Discount (if any)
+      if (discount > 0) {
+        doc.setFont("courier", "bold");
+        doc.setFontSize(10);
+        doc.text("DISCOUNT", summaryX - labelWidth, summaryStartY, { align: "right" });
+        doc.text(`-Rs${Math.round(discount).toLocaleString('en-US')}`, summaryX, summaryStartY, { align: "right" });
+        summaryStartY += 8;
+      }
       
       doc.setFont("courier", "bold");
       doc.setFontSize(10);
@@ -342,13 +487,30 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
       const footerLeftX = margin;
       const footerRightX = pageWidth - margin;
 
+      // Notes section (if any)
+      const notesText = editedNotes || invoice.notes;
+      if (notesText) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("NOTES", footerLeftX, currentY);
+        doc.setFont("courier", "normal");
+        doc.setFontSize(8);
+        doc.text(
+          notesText,
+          footerLeftX,
+          currentY + 6,
+          { maxWidth: (pageWidth - margin * 2) / 2 }
+        );
+        currentY += 20;
+      }
+
       // Terms & Conditions
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.text("TERM & CONDITION", footerLeftX, currentY);
       doc.setFont("courier", "normal");
       doc.setFontSize(8);
-      const termsText = editedTerms || invoice.terms || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent placerat vel sapien a ornare.";
+      const termsText = editedTerms || invoice.terms || DEFAULT_TERMS;
       doc.text(
         termsText,
         footerLeftX,
@@ -377,7 +539,8 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
         doc.text("GENERAL MANAGER", footerRightX, currentY + 35, { align: "right" });
       }
 
-      doc.save(`Invoice-INV-${invoice.id.padStart(6, '0')}.pdf`);
+      // Reuse invoiceId already declared above for PDF filename
+      doc.save(`Invoice-${invoiceId}.pdf`);
       setShowPreviewModal(false);
     } catch (error) {
       console.error("Failed to generate PDF", error);
@@ -386,7 +549,10 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
   };
 
   const handleShareWhatsApp = () => {
-    const invoiceNumber = `INV-${invoice.id.padStart(6, '0')}`;
+    const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
+    const customerName = invoice.customer || '';
+    const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+    const invoiceNumber = (plateNo && initials) ? `${plateNo}-${initials}` : `INV-${invoice.id.padStart(6, '0')}`;
     const message = `Invoice ${invoiceNumber} from ${businessProfile.name}\n\nCustomer: ${invoice.customer}\nAmount: Rs${total.toLocaleString('en-US')}\n\nView invoice details at your convenience.`;
     const whatsappUrl = `https://wa.me/${invoice.customerPhone?.replace(/[^0-9]/g, '') || ''}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
@@ -394,8 +560,69 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
   };
 
   const handleShareEmail = () => {
-    setShowEmailDialog(true);
+    if (!invoice.customerEmail) {
+      alert("Customer email is not available");
+      setShowShareMenu(false);
+      return;
+    }
+    
+    const subject = encodeURIComponent(`Invoice ${invoice.id} - ${businessProfile.name}`);
+    const body = encodeURIComponent(
+      `Dear ${invoice.customer},\n\n` +
+      `Please find attached invoice ${invoice.id} for your vehicle.\n\n` +
+      `Invoice Details:\n` +
+      `- Invoice ID: ${(() => {
+        const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
+        const customerName = invoice.customer || '';
+        if (plateNo && customerName) {
+          const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+          if (initials) {
+            return `${plateNo}-${initials}`;
+          }
+        }
+        return `INV-${invoice.id.padStart(6, '0')}`;
+      })()}\n` +
+      `- Date: ${invoice.date}\n` +
+      `- Vehicle: ${invoice.make} ${invoice.model} ${invoice.year || ''}\n` +
+      `- Total Amount: Rs ${invoice.amount?.toLocaleString() || '0'}\n\n` +
+      `Thank you for choosing ${businessProfile.name}!\n\n` +
+      `Best regards,\n${businessProfile.name} Team`
+    );
+    const mailtoUrl = `mailto:${invoice.customerEmail}?subject=${subject}&body=${body}`;
+    window.location.href = mailtoUrl;
     setShowShareMenu(false);
+  };
+
+  const handleEmailInvoice = () => {
+    if (!invoice.customerEmail) {
+      alert("Customer email is not available");
+      return;
+    }
+    
+    const subject = encodeURIComponent(`Invoice ${invoice.id} - ${businessProfile.name}`);
+    const body = encodeURIComponent(
+      `Dear ${invoice.customer},\n\n` +
+      `Please find attached invoice ${invoice.id} for your vehicle.\n\n` +
+      `Invoice Details:\n` +
+      `- Invoice ID: ${(() => {
+        const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
+        const customerName = invoice.customer || '';
+        if (plateNo && customerName) {
+          const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+          if (initials) {
+            return `${plateNo}-${initials}`;
+          }
+        }
+        return `INV-${invoice.id.padStart(6, '0')}`;
+      })()}\n` +
+      `- Date: ${invoice.date}\n` +
+      `- Vehicle: ${invoice.make} ${invoice.model} ${invoice.year || ''}\n` +
+      `- Total Amount: Rs ${invoice.amount?.toLocaleString() || '0'}\n\n` +
+      `Thank you for choosing ${businessProfile.name}!\n\n` +
+      `Best regards,\n${businessProfile.name} Team`
+    );
+    const mailtoUrl = `mailto:${invoice.customerEmail}?subject=${subject}&body=${body}`;
+    window.location.href = mailtoUrl;
   };
 
   // Close share menu when clicking outside
@@ -435,14 +662,6 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
     }
   };
 
-  const handleSendEmail = () => {
-    // In a real app, this would send the invoice via email
-    console.log("Sending email to:", emailTo);
-    console.log("Subject:", emailSubject);
-    console.log("Message:", emailMessage);
-    alert(`Invoice sent to ${emailTo}!`);
-    setShowEmailDialog(false);
-  };
 
   return (
     <div className="h-screen flex flex-col bg-slate-50">
@@ -461,14 +680,28 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
           )}
           <div>
             <h1 className="mb-0.5">Invoice Details</h1>
-            <p className="text-sm text-slate-600">INV-{invoice.id.padStart(3, '0')}</p>
+            <p className="text-sm text-slate-600">
+              {(() => {
+                const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
+                const customerName = invoice.customer || '';
+                if (plateNo && customerName) {
+                  const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+                  if (initials) {
+                    return `${plateNo}-${initials}`;
+                  }
+                }
+                return `INV-${invoice.id.padStart(3, '0')}`;
+              })()}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={handleDownloadClick}>
-            <Download className="h-4 w-4 mr-2" />
-            <span className="hidden sm:inline">Download PDF</span>
-          </Button>
+          {invoice.status === "Paid" && (
+            <Button variant="outline" size="sm" onClick={handleDownloadClick}>
+              <Download className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">Download PDF</span>
+            </Button>
+          )}
           
           {/* Invoice Preview Modal */}
           <Dialog open={showPreviewModal} onOpenChange={setShowPreviewModal}>
@@ -488,18 +721,31 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="max-w-5xl mx-auto">
                   {/* Invoice Document Preview - Same as main view but in modal */}
-                  <Card className="p-8 lg:p-12 bg-[#f5f5dc] print:shadow-none print:border-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  <Card className="p-8 lg:p-12 bg-white print:shadow-none print:border-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                     {/* Header - INVOICE in large red, logo top right */}
-                    <div className="flex items-start justify-between mb-8">
+                    <div className="flex items-start justify-between mb-10">
                       {/* Left: INVOICE title and details */}
                       <div className="flex-1">
                         <h1 className="text-6xl lg:text-7xl font-bold text-[#c53032] mb-6 leading-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           INVOICE
                         </h1>
-                        <div className="space-y-1 text-sm text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                          <div>INVOICE NUMBER: #{invoice.id.padStart(4, '0')}</div>
-                          <div>DATE: {typeof invoice.date === 'string' ? invoice.date.toUpperCase() : new Date(invoice.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()}</div>
-                          <div>DUE DATE: {typeof invoice.date === 'string' ? invoice.date.toUpperCase() : new Date(invoice.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()}</div>
+                        <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          {(() => {
+                            const invoiceDate = typeof currentDate === 'string' ? new Date(currentDate) : new Date(currentDate);
+                            const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Karachi' });
+                            const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' });
+                            const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
+                            const customerName = invoice.customer || '';
+                            const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+                            const invoiceId = plateNo && initials ? `${plateNo}-${initials}` : '';
+                            return (
+                              <>
+                                <div>DATE: {dateStr.toUpperCase()}</div>
+                                <div>TIME: {timeStr.toUpperCase()}</div>
+                                {invoiceId && <div>INVOICE ID: {invoiceId.toUpperCase()}</div>}
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                       
@@ -511,32 +757,35 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                             <img 
                               src={businessProfile.logo} 
                               alt={businessProfile.name}
-                              className="h-16 w-16 object-contain"
+                              className="h-20 w-20 object-contain"
                             />
                           </div>
                         ) : (
                           <div className="mb-4 flex justify-end">
-                            <div className="w-16 h-16 bg-gradient-to-br from-slate-600 to-slate-700 border border-slate-200 rounded-lg flex items-center justify-center">
-                              <span className="text-white text-2xl font-bold">MW</span>
+                            <div className="w-20 h-20 bg-gradient-to-br from-slate-600 to-slate-700 border border-slate-200 rounded-lg flex items-center justify-center">
+                              <span className="text-white text-3xl font-bold">MW</span>
                             </div>
                           </div>
                         )}
-                        <div className="space-y-1 text-sm text-slate-900 text-right" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                          <div>{businessProfile.address.toUpperCase()}</div>
-                          <div>{businessProfile.city.toUpperCase()}</div>
+                        <div className="space-y-2 text-base text-slate-900 text-right" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          {businessProfile.address ? (
+                            businessProfile.address.split('\n').map((line, index) => (
+                              <div key={index}>{line.toUpperCase()}</div>
+                            ))
+                          ) : null}
                           <div>{businessProfile.phone}</div>
                         </div>
                       </div>
                     </div>
 
                     {/* Billing and Payment Section */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
                       {/* Bill To */}
                       <div>
-                        <h3 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                        <h3 className="text-lg font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           Bill To:
                         </h3>
-                        <div className="space-y-1 text-sm text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                        <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           <p className="font-bold">{invoice.customer.toUpperCase()}</p>
                           {invoice.customerPhone && (
                             <p>{invoice.customerPhone}</p>
@@ -549,58 +798,55 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
 
                       {/* Payment Method */}
                       <div>
-                        <h3 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                        <h3 className="text-lg font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           Payment Method
                         </h3>
-                        <div className="space-y-1 text-sm text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                        <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           <p className="font-bold">{invoice.paymentMethod.toUpperCase()}</p>
                           {invoice.technician && (
                             <p>{invoice.technician.toUpperCase()}</p>
-                          )}
-                          {invoice.customerPhone && (
-                            <p>{invoice.customerPhone}</p>
                           )}
                         </div>
                       </div>
                     </div>
 
                     {/* Service Items Table - Gray header */}
-                    <div className="mb-8">
+                    <div className="mb-10">
                       <table className="w-full border-collapse" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                         <thead>
                           <tr className="bg-slate-300">
-                            <th className="text-left py-3 px-4 text-sm font-bold text-slate-900 border border-slate-400">
+                            <th className="text-left py-4 px-5 text-base font-bold text-slate-900 border border-slate-400">
                               DESCRIPTION
                             </th>
-                            <th className="text-center py-3 px-4 text-sm font-bold text-slate-900 border border-slate-400">
+                            <th className="text-center py-4 px-5 text-base font-bold text-slate-900 border border-slate-400">
                               QTY
                             </th>
-                            <th className="text-right py-3 px-4 text-sm font-bold text-slate-900 border border-slate-400">
+                            <th className="text-right py-4 px-5 text-base font-bold text-slate-900 border border-slate-400">
                               PRICE
                             </th>
-                            <th className="text-right py-3 px-4 text-sm font-bold text-slate-900 border border-slate-400">
+                            <th className="text-right py-4 px-5 text-base font-bold text-slate-900 border border-slate-400">
                               SUBTOTAL
                             </th>
                           </tr>
                         </thead>
                         <tbody>
-                          {items.map((item, index) => {
+                          {currentItems.map((item, index) => {
                             const itemPrice = getItemPrice(item);
                             const itemName = getItemName(item);
                             const itemTotal = itemPrice * item.quantity;
                             
                             return (
                               <tr key={index} className="bg-white">
-                                <td className="py-3 px-4 text-sm text-slate-900 border border-slate-300">
+                                <td className="py-4 px-5 text-base text-slate-900 border border-slate-300 font-bold">
                                   {itemName.toUpperCase()}
                                 </td>
-                                <td className="text-center py-3 px-4 text-sm text-slate-900 border border-slate-300">
+                                <td className="text-center py-4 px-5 text-base text-slate-900 border border-slate-300">
                                   {item.quantity.toString().padStart(2, '0')}
                                 </td>
-                                <td className="text-right py-3 px-4 text-sm text-slate-900 border border-slate-300">
+                                <td className="text-right py-4 px-5 text-base text-slate-900 border border-slate-300">
                                   Rs{itemPrice.toLocaleString('en-US')}
                                 </td>
-                                <td className="text-right py-3 px-4 text-sm font-bold text-slate-900 border border-slate-300">
+                                <td className="text-right py-4 px-5 text-base font-bold text-slate-900 border border-slate-300">
                                   Rs{itemTotal.toLocaleString('en-US')}
                                 </td>
                               </tr>
@@ -611,55 +857,71 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                     </div>
 
                     {/* Totals Section - Right aligned */}
-                    <div className="flex justify-end mb-8">
-                      <div className="w-full lg:w-80">
+                    <div className="flex justify-end mb-10">
+                      <div className="w-full lg:w-96">
                         <table className="w-full" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           <tbody>
+                            {discount > 0 && (
+                              <tr>
+                                <td className="text-left py-3 text-lg font-bold text-green-600">DISCOUNT</td>
+                                <td className="text-right py-3 text-lg font-bold text-green-600">-Rs{Math.round(discount).toLocaleString('en-US')}</td>
+                              </tr>
+                            )}
                             <tr>
-                              <td className="text-left py-2 text-sm font-bold text-slate-900">TAX</td>
-                              <td className="text-right py-2 text-sm font-bold text-slate-900">Rs{Math.round(taxAmount).toLocaleString('en-US')}</td>
+                              <td className="text-left py-3 text-lg font-bold text-slate-900">TAX</td>
+                              <td className="text-right py-3 text-lg font-bold text-slate-900">Rs{Math.round(taxAmount).toLocaleString('en-US')}</td>
                             </tr>
                             <tr>
-                              <td className="text-left py-2 text-base font-bold text-slate-900">GRAND TOTAL</td>
-                              <td className="text-right py-2 text-base font-bold text-slate-900">Rs{Math.round(total).toLocaleString('en-US')}</td>
+                              <td className="text-left py-3 text-xl font-bold text-slate-900">GRAND TOTAL</td>
+                              <td className="text-right py-3 text-xl font-bold text-slate-900">Rs{Math.round(total).toLocaleString('en-US')}</td>
                             </tr>
                           </tbody>
                         </table>
                       </div>
                     </div>
 
+                    {/* Notes Section (if any) */}
+                    {(editedNotes || invoice.notes) && (
+                      <div className="mb-8">
+                        <h4 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          NOTES
+                        </h4>
+                        <p className="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          {editedNotes || invoice.notes}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Footer - TERM & CONDITION and Contact Info */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
                       {/* Terms & Conditions - Left */}
                       <div className="lg:col-span-1">
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="text-sm font-bold text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                            TERM & CONDITION
-                          </h4>
-                        </div>
-                        <p className="text-xs text-slate-900 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                          {editedTerms || invoice.terms || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent placerat vel sapien a ornare."}
+                        <h4 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          TERM & CONDITION
+                        </h4>
+                        <p className="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          {editedTerms || invoice.terms || DEFAULT_TERMS}
                         </p>
                       </div>
 
                       {/* Contact Info - Right */}
                       <div className="lg:col-span-2 text-right">
-                        <h4 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                        <h4 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           FOR ANY QUESTIONS, PLEASE CONTACT
                         </h4>
-                        <div className="space-y-1 text-sm text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                        <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                           <p>{businessProfile.email.toUpperCase()}</p>
                           <p>OR {businessProfile.phone}.</p>
                         </div>
                         
                         {/* Signature */}
                         {invoice.technician && (
-                          <div className="mt-6">
-                            <div className="border-b-2 border-slate-900 pb-8 mb-2 inline-block w-48"></div>
-                            <p className="text-sm font-bold text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                          <div className="mt-8">
+                            <div className="border-b-2 border-slate-900 pb-10 mb-2 inline-block w-56"></div>
+                            <p className="text-base font-bold text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                               {invoice.technician.toUpperCase()}
                             </p>
-                            <p className="text-xs text-slate-600" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                            <p className="text-sm text-slate-600" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                               GENERAL MANAGER
                             </p>
                           </div>
@@ -713,91 +975,33 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
             <Printer className="h-4 w-4 mr-2" />
                     Print
           </Button>
-                  <Button
-                    size="sm"
-                    onClick={handleDownloadPDF}
-                    className="bg-[#c53032] hover:bg-[#a6212a] text-white"
-                  >
-            <Download className="h-4 w-4 mr-2" />
-                    Download PDF
-          </Button>
+                  {invoice.status === "Paid" && (
+                    <Button
+                      size="sm"
+                      onClick={handleDownloadPDF}
+                      className="bg-[#c53032] hover:bg-[#a6212a] text-white"
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Download PDF
+                    </Button>
+                  )}
                 </div>
               </div>
             </DialogContent>
           </Dialog>
           
-          {/* Email Dialog */}
-          <Dialog open={showEmailDialog} onOpenChange={setShowEmailDialog}>
-            <DialogTrigger asChild>
-              <Button 
-                variant="outline" 
-                size="sm"
-                className="bg-[#c53032] text-white hover:bg-[#a6212a] hover:text-white border-[#c53032]"
-              >
-                <Mail className="h-4 w-4 mr-2" />
-                <span className="hidden sm:inline">Email</span>
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Email Invoice</DialogTitle>
-                <DialogDescription>
-                  Send this invoice to the customer via email
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email-to">To</Label>
-                  <Input
-                    id="email-to"
-                    type="email"
-                    placeholder="customer@email.com"
-                    value={emailTo}
-                    onChange={(e) => setEmailTo(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email-subject">Subject</Label>
-                  <Input
-                    id="email-subject"
-                    value={emailSubject}
-                    onChange={(e) => setEmailSubject(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email-message">Message</Label>
-                  <Textarea
-                    id="email-message"
-                    rows={5}
-                    value={emailMessage}
-                    onChange={(e) => setEmailMessage(e.target.value)}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button 
-                    onClick={handleSendEmail}
-                    className="flex-1 bg-[#c53032] hover:bg-[#a6212a]"
-                  >
-                    <Send className="h-4 w-4 mr-2" />
-                    Send Email
-                  </Button>
-                  <Button 
-                    variant="outline"
-                    onClick={() => setShowEmailDialog(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+          {/* Email Button - Opens email client directly */}
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={handleEmailInvoice}
+            disabled={!invoice.customerEmail}
+            className="bg-[#c53032] text-white hover:bg-[#a6212a] hover:text-white border-[#c53032]"
+          >
+            <Mail className="h-4 w-4 mr-2" />
+            <span className="hidden sm:inline">Email</span>
+          </Button>
 
-          {onEdit && (
-            <Button variant="outline" size="sm" onClick={onEdit}>
-              <Edit className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">Edit</span>
-            </Button>
-          )}
         </div>
       </div>
 
@@ -809,16 +1013,36 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
             <Card className="p-4">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                  invoice.status === "Paid" ? "bg-green-100" :
-                  invoice.status === "Pending" ? "bg-orange-100" : "bg-red-100"
+                  currentStatus === "Paid" ? "bg-green-100" :
+                  currentStatus === "Draft" ? "bg-yellow-100" :
+                  "bg-orange-100"
                 }`}>
-                  {getStatusIcon(invoice.status)}
+                  {getStatusIcon(currentStatus)}
                 </div>
-                <div>
+                <div className="flex-1">
                   <p className="text-xs text-slate-500">Status</p>
-                  <Badge className={getStatusColor(invoice.status)}>
-                    {invoice.status}
-                  </Badge>
+                  {isEditMode ? (
+                    <Select value={currentStatus} onValueChange={(value: "Draft" | "Unpaid" | "Paid") => setEditedStatus(value)}>
+                      <SelectTrigger className="h-8 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Draft">
+                          <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">Draft</Badge>
+                        </SelectItem>
+                        <SelectItem value="Unpaid">
+                          <Badge className="bg-orange-100 text-orange-700 border-orange-200">Unpaid</Badge>
+                        </SelectItem>
+                        <SelectItem value="Paid">
+                          <Badge className="bg-green-100 text-green-700 border-green-200">Paid</Badge>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge className={getStatusColor(currentStatus)}>
+                      {currentStatus}
+                    </Badge>
+                  )}
                 </div>
               </div>
             </Card>
@@ -828,9 +1052,23 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                 <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
                   <PaymentIcon className="h-5 w-5 text-blue-600" />
                 </div>
-                <div>
+                <div className="flex-1">
                   <p className="text-xs text-slate-500">Payment Method</p>
-                  <p className="font-medium text-sm">{invoice.paymentMethod}</p>
+                  {isEditMode ? (
+                    <Select value={currentPaymentMethod} onValueChange={setEditedPaymentMethod}>
+                      <SelectTrigger className="h-8 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Cash">Cash</SelectItem>
+                        <SelectItem value="Card">Card</SelectItem>
+                        <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                        <SelectItem value="Mobile Payment">Mobile Payment</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <p className="font-medium text-sm">{currentPaymentMethod}</p>
+                  )}
                 </div>
               </div>
             </Card>
@@ -840,27 +1078,49 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                 <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
                   <Calendar className="h-5 w-5 text-purple-600" />
                 </div>
-                <div>
+                <div className="flex-1">
                   <p className="text-xs text-slate-500">Invoice Date</p>
-                  <p className="font-medium text-sm">{invoice.date}</p>
+                  {isEditMode ? (
+                    <Input
+                      type="date"
+                      value={currentDate}
+                      onChange={(e) => setEditedDate(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  ) : (
+                    <p className="font-medium text-sm">{currentDate}</p>
+                  )}
                 </div>
               </div>
             </Card>
           </div>
 
           {/* Invoice Document - Anonymous Pro Design */}
-          <Card className="p-8 lg:p-12 bg-[#f5f5dc] print:shadow-none print:border-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+          <Card className="p-8 lg:p-12 bg-white print:shadow-none print:border-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
             {/* Header - INVOICE in large red, logo top right */}
-            <div className="flex items-start justify-between mb-8">
+            <div className="flex items-start justify-between mb-10">
               {/* Left: INVOICE title and details */}
               <div className="flex-1">
                 <h1 className="text-6xl lg:text-7xl font-bold text-[#c53032] mb-6 leading-none" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   INVOICE
                 </h1>
-                <div className="space-y-1 text-sm text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                  <div>INVOICE NUMBER: #{invoice.id.padStart(4, '0')}</div>
-                  <div>DATE: {typeof invoice.date === 'string' ? invoice.date.toUpperCase() : new Date(invoice.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()}</div>
-                  <div>DUE DATE: {typeof invoice.date === 'string' ? invoice.date.toUpperCase() : new Date(invoice.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()}</div>
+                <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  {(() => {
+                    const invoiceDate = typeof currentDate === 'string' ? new Date(currentDate) : new Date(currentDate);
+                    const dateStr = invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Karachi' });
+                    const timeStr = invoiceDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' });
+                    const plateNo = invoice.plate || invoice.vehicle?.plateNo || '';
+                    const customerName = invoice.customer || '';
+                    const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+                    const invoiceId = plateNo && initials ? `${plateNo}-${initials}` : '';
+                    return (
+                      <>
+                        <div>DATE: {dateStr.toUpperCase()}</div>
+                        <div>TIME: {timeStr.toUpperCase()}</div>
+                        {invoiceId && <div>INVOICE ID: {invoiceId.toUpperCase()}</div>}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
               
@@ -872,32 +1132,35 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
                     <img 
                       src={businessProfile.logo} 
                       alt={businessProfile.name}
-                      className="h-16 w-16 object-contain"
+                      className="h-20 w-20 object-contain"
                     />
                   </div>
                 ) : (
                   <div className="mb-4 flex justify-end">
-                    <div className="w-16 h-16 bg-gradient-to-br from-slate-600 to-slate-700 rounded flex items-center justify-center">
-                      <span className="text-white text-2xl font-bold">MW</span>
+                    <div className="w-20 h-20 bg-gradient-to-br from-slate-600 to-slate-700 rounded flex items-center justify-center">
+                      <span className="text-white text-3xl font-bold">MW</span>
                     </div>
                   </div>
                 )}
-                <div className="space-y-1 text-sm text-slate-900 text-right" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                  <div>{businessProfile.address.toUpperCase()}</div>
-                  <div>{businessProfile.city.toUpperCase()}</div>
+                <div className="space-y-2 text-base text-slate-900 text-right" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  {businessProfile.address ? (
+                    businessProfile.address.split('\n').map((line, index) => (
+                      <div key={index}>{line.toUpperCase()}</div>
+                    ))
+                  ) : null}
                   <div>{businessProfile.phone}</div>
                     </div>
                 </div>
               </div>
               
             {/* Billing and Payment Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
               {/* Bill To */}
               <div>
-                <h3 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                <h3 className="text-lg font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   Bill To:
                 </h3>
-                <div className="space-y-1 text-sm text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   <p className="font-bold">{invoice.customer.toUpperCase()}</p>
                   {invoice.customerAddress && (
                     <p>{invoice.customerAddress}</p>
@@ -910,59 +1173,56 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
 
               {/* Payment Method */}
               <div>
-                <h3 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                <h3 className="text-lg font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   Payment Method
                 </h3>
-                <div className="space-y-1 text-sm text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                  <p className="font-bold">{invoice.paymentMethod.toUpperCase()}</p>
+                <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  <p className="font-bold">{currentPaymentMethod.toUpperCase()}</p>
                   {invoice.technician && (
                     <p>{invoice.technician.toUpperCase()}</p>
-                  )}
-                  {invoice.customerPhone && (
-                    <p>{invoice.customerPhone}</p>
                   )}
                 </div>
               </div>
             </div>
 
             {/* Service Items Table - Gray header */}
-            <div className="mb-8">
+            <div className="mb-10">
               <table className="w-full border-collapse" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                 <thead>
                   <tr className="bg-slate-300">
-                    <th className="text-left py-3 px-4 text-sm font-bold text-slate-900 border border-slate-400">
+                    <th className="text-left py-4 px-5 text-base font-bold text-slate-900 border border-slate-400">
                       DESCRIPTION
                       </th>
-                    <th className="text-center py-3 px-4 text-sm font-bold text-slate-900 border border-slate-400">
+                    <th className="text-center py-4 px-5 text-base font-bold text-slate-900 border border-slate-400">
                       QTY
                       </th>
-                    <th className="text-right py-3 px-4 text-sm font-bold text-slate-900 border border-slate-400">
+                    <th className="text-right py-4 px-5 text-base font-bold text-slate-900 border border-slate-400">
                       PRICE
                       </th>
-                    <th className="text-right py-3 px-4 text-sm font-bold text-slate-900 border border-slate-400">
+                    <th className="text-right py-4 px-5 text-base font-bold text-slate-900 border border-slate-400">
                       SUBTOTAL
                       </th>
                     </tr>
                   </thead>
                 <tbody>
-                    {items.map((item, index) => {
+                    {currentItems.map((item, index) => {
                       const itemPrice = getItemPrice(item);
                       const itemName = getItemName(item);
                       const itemTotal = itemPrice * item.quantity;
                       
                       return (
                       <tr key={index} className="bg-white">
-                        <td className="py-3 px-4 text-sm text-slate-900 border border-slate-300">
+                        <td className="py-4 px-5 text-base text-slate-900 border border-slate-300 font-bold">
                           {itemName.toUpperCase()}
                           </td>
-                        <td className="text-center py-3 px-4 text-sm text-slate-900 border border-slate-300">
+                        <td className="text-center py-4 px-5 text-base text-slate-900 border border-slate-300">
                           {item.quantity.toString().padStart(2, '0')}
                           </td>
-                        <td className="text-right py-3 px-4 text-sm text-slate-900 border border-slate-300">
-                          ₨{itemPrice.toLocaleString()}
+                        <td className="text-right py-4 px-5 text-base text-slate-900 border border-slate-300">
+                          Rs{itemPrice.toLocaleString()}
                           </td>
-                        <td className="text-right py-3 px-4 text-sm font-bold text-slate-900 border border-slate-300">
-                          ₨{itemTotal.toLocaleString()}
+                        <td className="text-right py-4 px-5 text-base font-bold text-slate-900 border border-slate-300">
+                          Rs{itemTotal.toLocaleString()}
                           </td>
                         </tr>
                       );
@@ -972,191 +1232,71 @@ export function InvoiceDetail({ invoice, onClose, onEdit }: InvoiceDetailProps) 
             </div>
 
             {/* Totals Section - Right aligned */}
-            <div className="flex justify-end mb-8">
-              <div className="w-full lg:w-80">
+            <div className="flex justify-end mb-10">
+              <div className="w-full lg:w-96">
                 <table className="w-full" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   <tbody>
+                    {discount > 0 && (
+                      <tr>
+                        <td className="text-left py-3 text-lg font-bold text-green-600">DISCOUNT</td>
+                        <td className="text-right py-3 text-lg font-bold text-green-600">-Rs{Math.round(discount).toLocaleString()}</td>
+                      </tr>
+                    )}
                     <tr>
-                      <td className="text-left py-2 text-sm font-bold text-slate-900">TAX</td>
-                      <td className="text-right py-2 text-sm font-bold text-slate-900">₨{Math.round(taxAmount).toLocaleString()}</td>
+                      <td className="text-left py-3 text-lg font-bold text-slate-900">TAX</td>
+                      <td className="text-right py-3 text-lg font-bold text-slate-900">Rs{Math.round(taxAmount).toLocaleString()}</td>
                     </tr>
                     <tr>
-                      <td className="text-left py-2 text-base font-bold text-slate-900">GRAND TOTAL</td>
-                      <td className="text-right py-2 text-base font-bold text-slate-900">₨{Math.round(total).toLocaleString()}</td>
+                      <td className="text-left py-3 text-xl font-bold text-slate-900">GRAND TOTAL</td>
+                      <td className="text-right py-3 text-xl font-bold text-slate-900">Rs{Math.round(total).toLocaleString()}</td>
                     </tr>
                   </tbody>
                 </table>
-                </div>
-              </div>
-
-            {/* Signatures Section - Minimal */}
-            {(invoice.technician || invoice.supervisor) && (
-              <div className="mb-12">
-                <div className="border-t border-slate-200 pt-8">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                {/* Technician Signature */}
-                {invoice.technician && (
-                  <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Technician</p>
-                        <div className="border-b border-slate-300 pb-8 mb-2">
-                      {invoice.technicianSignature && (
-                        <div className="text-center text-2xl text-slate-400 italic">
-                          {invoice.technicianSignature}
-                        </div>
-                      )}
-                    </div>
-                        <p className="font-semibold text-slate-900">{invoice.technician}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">Authorized Technician</p>
-                  </div>
-                )}
-
-                {/* Supervisor Signature */}
-                {invoice.supervisor && (
-                  <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Supervisor</p>
-                        <div className="border-b border-slate-300 pb-8 mb-2">
-                      {invoice.supervisorSignature && (
-                        <div className="text-center text-2xl text-slate-400 italic">
-                          {invoice.supervisorSignature}
-                        </div>
-                      )}
-                    </div>
-                        <p className="font-semibold text-slate-900">{invoice.supervisor}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">Authorized Supervisor</p>
-                  </div>
-                )}
               </div>
             </div>
+
+            {/* Notes Section (if any) */}
+            {(editedNotes || invoice.notes) && (
+              <div className="mb-8">
+                <h4 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  NOTES
+                </h4>
+                <p className="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  {editedNotes || invoice.notes}
+                </p>
               </div>
             )}
-
-            {/* Notes/Terms - Editable */}
-            <div className="mb-12 space-y-6">
-              {/* Notes Section */}
-                    <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Notes</h4>
-                  {onEdit && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => setIsEditingNotes(!isEditingNotes)}
-                    >
-                      {isEditingNotes ? "Save" : <Edit className="h-3 w-3 mr-1" />}
-                      {isEditingNotes ? null : "Edit"}
-                    </Button>
-                  )}
-                    </div>
-                {isEditingNotes && onEdit ? (
-                  <Textarea
-                    value={editedNotes}
-                    onChange={(e) => setEditedNotes(e.target.value)}
-                    placeholder="Add notes..."
-                    className="min-h-[100px] text-sm"
-                    onBlur={() => {
-                      setIsEditingNotes(false);
-                      // Here you would save to backend
-                    }}
-                  />
-                ) : (
-                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
-                    {editedNotes || invoice.notes || <span className="text-slate-400 italic">No notes added</span>}
-                  </p>
-                )}
-              </div>
-
-              {/* Terms Section */}
-                    <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Terms & Conditions</h4>
-                  {onEdit && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => setIsEditingTerms(!isEditingTerms)}
-                    >
-                      {isEditingTerms ? "Save" : <Edit className="h-3 w-3 mr-1" />}
-                      {isEditingTerms ? null : "Edit"}
-                    </Button>
-                  )}
-                    </div>
-                {isEditingTerms && onEdit ? (
-                  <Textarea
-                    value={editedTerms}
-                    onChange={(e) => setEditedTerms(e.target.value)}
-                    placeholder="Add terms and conditions..."
-                    className="min-h-[100px] text-sm"
-                    onBlur={() => {
-                      setIsEditingTerms(false);
-                      // Here you would save to backend
-                    }}
-                  />
-                ) : (
-                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
-                    {editedTerms || invoice.terms || <span className="text-slate-400 italic">No terms specified</span>}
-                  </p>
-                  )}
-                </div>
-            </div>
 
             {/* Footer - TERM & CONDITION and Contact Info */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
               {/* Terms & Conditions - Left */}
               <div className="lg:col-span-1">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-bold text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                    TERM & CONDITION
-                  </h4>
-                  {onEdit && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => setIsEditingTerms(!isEditingTerms)}
-                    >
-                      {isEditingTerms ? "Save" : <Edit className="h-3 w-3 mr-1" />}
-                      {isEditingTerms ? null : "Edit"}
-                    </Button>
-                  )}
-                </div>
-                {isEditingTerms && onEdit ? (
-                  <Textarea
-                    value={editedTerms}
-                    onChange={(e) => setEditedTerms(e.target.value)}
-                    placeholder="Add terms and conditions..."
-                    className="min-h-[100px] text-sm"
-                    style={{ fontFamily: "'Anonymous Pro', monospace" }}
-                    onBlur={() => {
-                      setIsEditingTerms(false);
-                    }}
-                  />
-                ) : (
-                  <p className="text-xs text-slate-900 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
-                    {editedTerms || invoice.terms || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent placerat vel sapien a ornare. Morbi faucibus nunc diam, in sodales nunc rutrum et."}
-                  </p>
-                )}
+                <h4 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  TERM & CONDITION
+                </h4>
+                <p className="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  {editedTerms || invoice.terms || DEFAULT_TERMS}
+                </p>
               </div>
 
               {/* Contact Info - Right */}
               <div className="lg:col-span-2 text-right">
-                <h4 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                <h4 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   FOR ANY QUESTIONS, PLEASE CONTACT
                 </h4>
-                <div className="space-y-1 text-sm text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                <div className="space-y-2 text-base text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                   <p>{businessProfile.email.toUpperCase()}</p>
                   <p>OR {businessProfile.phone}.</p>
               </div>
                 
                 {/* Signature */}
                 {invoice.technician && (
-                  <div className="mt-6">
-                    <div className="border-b-2 border-slate-900 pb-8 mb-2 inline-block w-48"></div>
-                    <p className="text-sm font-bold text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                  <div className="mt-8">
+                    <div className="border-b-2 border-slate-900 pb-10 mb-2 inline-block w-56"></div>
+                    <p className="text-base font-bold text-slate-900" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                       {invoice.technician.toUpperCase()}
                     </p>
-                    <p className="text-xs text-slate-600" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
+                    <p className="text-sm text-slate-600" style={{ fontFamily: "'Anonymous Pro', monospace" }}>
                       GENERAL MANAGER
                     </p>
                   </div>

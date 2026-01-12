@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -40,10 +41,12 @@ import {
 import { motion } from "motion/react";
 import { jobsAPI } from "../api/client";
 import { onJobUpdated, connectSocket } from "../lib/socket";
+import { formatJobId } from "../utils/idFormatter";
 
 type SortOption = "date-new" | "date-old" | "customer" | "amount-high" | "amount-low";
 
 export function JobCards() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedCard, setSelectedCard] = useState<any | null>(null);
   const [showCreateJobCard, setShowCreateJobCard] = useState(false);
   const [sortBy, setSortBy] = useState<SortOption>("date-new");
@@ -82,6 +85,20 @@ export function JobCards() {
       unsubscribe();
     };
   }, []);
+
+  // Check for ID in URL params and open job card detail
+  useEffect(() => {
+    const jobId = searchParams.get('id');
+    if (jobId && jobs.length > 0) {
+      const job = jobs.find(j => (j._id || j.id) === jobId);
+      if (job) {
+        setSelectedCard(job);
+        // Clean up URL
+        setSearchParams({});
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, jobs]);
 
   // Sort function
   const sortJobs = (jobs: any[]) => {
@@ -175,7 +192,7 @@ export function JobCards() {
         {/* Header */}
         <div className="flex items-start justify-between mb-2.5">
           <div>
-            <h3 className="text-sm font-medium mb-0.5">JOB-{job._id.slice(-6)}</h3>
+            <h3 className="text-sm font-medium mb-0.5">{formatJobId(job)}</h3>
             <p className="text-xs text-gray-600">{job.customer?.name || "N/A"}</p>
           </div>
           <DropdownMenu>
@@ -273,7 +290,10 @@ export function JobCards() {
     return (
       <JobCardDetail
         jobCard={selectedCard}
-        onClose={() => setSelectedCard(null)}
+        onClose={() => {
+          setSelectedCard(null);
+          setSearchParams({});
+        }}
         onSave={async (data) => {
           try {
             await jobsAPI.update(selectedCard._id, data);
@@ -518,7 +538,7 @@ export function JobCards() {
             <AlertDialogDescription>
               Are you sure you want to delete job{" "}
               <span className="font-semibold">
-                JOB-{jobToDelete?._id?.slice(-6) || jobToDelete?.id}
+                {formatJobId(jobToDelete)}
               </span>
               ? This action cannot be undone.
             </AlertDialogDescription>

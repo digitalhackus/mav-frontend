@@ -6,8 +6,10 @@ import { Separator } from "./ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { vehiclesAPI, serviceHistoryAPI } from "../api/client";
+import { vehiclesAPI, serviceHistoryAPI, notificationsAPI } from "../api/client";
+import { formatJobId, formatInvoiceId } from "../utils/idFormatter";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   Table,
   TableBody,
@@ -132,9 +134,26 @@ export function VehicleProfile({
       : null,
   };
 
-  const handleSendReminder = () => {
-    // Send reminder logic
-    console.log("Sending service reminder...");
+  const handleSendReminder = async () => {
+    if (!vehicle.ownerId || !vehicle.id) {
+      toast.error("Cannot send reminder: Missing owner or vehicle information");
+      return;
+    }
+
+    try {
+      toast.loading("Sending service reminder...", { id: "reminder" });
+      
+      const result = await notificationsAPI.sendEmail(vehicle.ownerId, vehicle.id);
+      
+      if (result.success) {
+        toast.success("Service reminder sent successfully via email!", { id: "reminder" });
+      } else {
+        toast.error(result.message || "Failed to send reminder. Please check customer email.", { id: "reminder" });
+      }
+    } catch (error: any) {
+      console.error("Error sending reminder:", error);
+      toast.error(error.message || "Failed to send service reminder", { id: "reminder" });
+    }
   };
 
   if (loading) {
@@ -540,8 +559,7 @@ export function VehicleProfile({
                       <div className="space-y-4">
                         {serviceHistory.slice(0, 3).map((service) => {
                           const jobId = service.job?._id || service.job || service._id;
-                          const jobIdStr = jobId?.toString() || '';
-                          const jobNumber = jobIdStr.slice(-6).padStart(6, '0');
+                          const jobNumber = formatJobId({ _id: jobId });
                           const isFromJob = service.isFromJob || service.jobDetails;
                           
                           return (
@@ -740,8 +758,7 @@ export function VehicleProfile({
                           ) : (
                             serviceHistory.map((service) => {
                               const jobId = service.job?._id || service.job || service._id;
-                              const jobIdStr = jobId?.toString() || '';
-                              const jobNumber = jobIdStr.slice(-6).padStart(6, '0');
+                              const jobNumber = formatJobId({ _id: jobId });
                               const isFromJob = service.isFromJob || service.jobDetails;
                               const jobStatus = service.jobDetails?.status || service.job?.status || 'COMPLETED';
                               
@@ -786,7 +803,7 @@ export function VehicleProfile({
                                         size="sm"
                                         className="h-8 text-blue-600 hover:text-blue-700 text-xs"
                                       >
-                                        INV-{service.invoice.toString().slice(-6)}
+                                        {formatInvoiceId({ _id: service.invoice.toString() })}
                                         <ExternalLink className="h-3 w-3 ml-1" />
                                       </Button>
                                     ) : (

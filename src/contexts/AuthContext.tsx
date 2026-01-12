@@ -26,7 +26,8 @@ const USER_KEY = 'mw_user';
 
 // Get API base URL from environment
 const getApiBaseUrl = () => {
-  let apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+  // For local development: Use empty string to use Vite proxy (which forwards to http://localhost:5000)
+  let apiBaseUrl = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '' : 'http://localhost:5000');
   if (apiBaseUrl && !apiBaseUrl.startsWith('http://') && !apiBaseUrl.startsWith('https://')) {
     if (apiBaseUrl.includes('.railway.app') || apiBaseUrl.includes('.vercel.app') || import.meta.env.PROD) {
       apiBaseUrl = `https://${apiBaseUrl}`;

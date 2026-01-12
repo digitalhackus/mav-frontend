@@ -1,8 +1,8 @@
 // Get API base URL from environment variable
 // For production: Set VITE_API_BASE_URL in Vercel environment variables
 // Example: VITE_API_BASE_URL=https://momentum-pos-production.up.railway.app
-// For local development: Use http://localhost:5000
-let API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+// For local development: Use empty string to use Vite proxy (which forwards to http://localhost:5000)
+let API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '' : 'http://localhost:5000');
 
 // Normalize the URL - ensure it has a protocol
 if (API_BASE_URL && !API_BASE_URL.startsWith('http://') && !API_BASE_URL.startsWith('https://')) {
@@ -48,24 +48,19 @@ export const removeToken = (): void => {
   localStorage.removeItem('mw_refreshToken');
 };
 
-// Check if token is expired or invalid
-const isTokenExpired = (token: string | null): boolean => {
-  if (!token) return true;
+// Check if token format is valid (don't check expiration - let backend handle it)
+const isTokenValid = (token: string | null): boolean => {
+  if (!token) return false;
   try {
     // JWT tokens have 3 parts separated by dots
     const parts = token.split('.');
-    if (parts.length !== 3) return true;
+    if (parts.length !== 3) return false;
     
-    // Decode the payload (second part)
-    const payload = JSON.parse(atob(parts[1]));
-    const exp = payload.exp;
-    
-    if (!exp) return false; // If no expiration, assume valid
-    
-    // Check if token is expired (with 5 second buffer)
-    return Date.now() >= (exp * 1000) - 5000;
+    // Just verify it's a valid JWT format, don't check expiration
+    // Backend will handle expiration validation
+    return true;
   } catch {
-    return true; // If we can't parse, assume invalid
+    return false; // If we can't parse, assume invalid format
   }
 };
 
@@ -76,7 +71,16 @@ const apiRequest = async <T>(
 ): Promise<T> => {
   const token = getToken();
   const url = `${API_BASE_URL}${endpoint}`;
-  const isAuthCheck = url.includes('/api/auth/me') || url.includes('/api/auth/login') || url.includes('/api/auth/signup');
+  // Public auth endpoints that don't require authentication
+  const isAuthCheck = url.includes('/api/auth/me') || 
+                      url.includes('/api/auth/login') || 
+                      url.includes('/api/auth/signup') ||
+                      url.includes('/api/auth/forgot-password') ||
+                      url.includes('/api/auth/reset-password') ||
+                      url.includes('/api/auth/verify-email') ||
+                      url.includes('/api/auth/verify-2fa') ||
+                      url.includes('/api/auth/send-verification-otp') ||
+                      url.includes('/api/auth/invitation/');
 
   // Log the full URL being called (for debugging)
   console.log('📡 API Request:', options.method || 'GET', url);
@@ -96,14 +100,14 @@ const apiRequest = async <T>(
     if (isAuthMeEndpoint) {
       headers['Authorization'] = `Bearer ${token}`;
     } else if (!isAuthCheck) {
-      // For non-auth endpoints, validate token before sending
-      if (isTokenExpired(token)) {
-        // Token is expired, remove it and throw error
+      // For non-auth endpoints, validate token format only
+      // Don't check expiration - let backend handle it (session won't expire until browser close or logout)
+      if (!isTokenValid(token)) {
+        // Token format is invalid, remove it and throw error
         removeToken();
-        const error = new Error('Session expired, please log in again');
+        const error = new Error('Invalid session token, please log in again');
         (error as any).status = 401;
         (error as any).isAuthError = true;
-        (error as any).isTokenExpired = true;
         throw error;
       }
       headers['Authorization'] = `Bearer ${token}`;
@@ -131,24 +135,27 @@ const apiRequest = async <T>(
     if (!response.ok) {
       // Handle 401 Unauthorized errors
       if (response.status === 401) {
-        // Remove invalid token
-        if (!isAuthCheck) {
-          removeToken();
-        }
-        
-        const error = new Error('Session expired, please log in again');
-        (error as any).status = 401;
-        (error as any).isAuthError = true;
-        
-        // Try to get error message from response
+        // Try to get error message from response first
+        let errorMessage = 'Session expired, please log in again';
         try {
           const errorData = await response.json();
           if (errorData.message || errorData.error) {
-            (error as any).message = errorData.message || errorData.error;
+            errorMessage = errorData.message || errorData.error;
           }
         } catch {
           // If response is not JSON, use default message
         }
+        
+        // Remove invalid token only for protected endpoints
+        if (!isAuthCheck) {
+          removeToken();
+        }
+        
+        // For public auth endpoints, use the server's error message
+        // For protected endpoints, use session expired message
+        const error = new Error(isAuthCheck ? errorMessage : 'Session expired, please log in again');
+        (error as any).status = 401;
+        (error as any).isAuthError = true;
         
         throw error;
       }
@@ -161,6 +168,10 @@ const apiRequest = async <T>(
       
       const error = new Error(errorData.error || errorData.message || `HTTP error! status: ${response.status}`);
       (error as any).status = response.status;
+      // Preserve errors object for validation errors
+      if (errorData.errors) {
+        (error as any).errors = errorData.errors;
+      }
       throw error;
     }
 
@@ -197,7 +208,7 @@ const apiRequest = async <T>(
 // Auth API
 export const authAPI = {
   login: async (email: string, password: string) => {
-    const data = await apiRequest<{ success: boolean; accessToken?: string; refreshToken?: string; user?: any; error?: string; requiresVerification?: boolean; userId?: string }>(
+    const data = await apiRequest<{ success: boolean; accessToken?: string; refreshToken?: string; user?: any; error?: string; errorType?: string; requiresVerification?: boolean; requires2FA?: boolean; userId?: string; message?: string }>(
       '/api/auth/login',
       {
         method: 'POST',
@@ -212,12 +223,26 @@ export const authAPI = {
     return data;
   },
 
-  signup: async (name: string, email: string, password: string, role?: string) => {
+  verify2FA: async (userId: string, otp: string) => {
+    const data = await apiRequest<{ success: boolean; accessToken?: string; refreshToken?: string; user?: any; error?: string; message?: string }>(
+      '/api/auth/verify-2fa',
+      {
+        method: 'POST',
+        body: JSON.stringify({ userId, otp }),
+      }
+    );
+    if (data.success && data.refreshToken) {
+      localStorage.setItem('mw_refreshToken', data.refreshToken);
+    }
+    return data;
+  },
+
+  signup: async (name: string, email: string, password: string, phone?: string, role?: string, invitationToken?: string) => {
     const data = await apiRequest<{ success: boolean; user?: any; error?: string; message?: string }>(
       '/api/auth/signup',
       {
         method: 'POST',
-        body: JSON.stringify({ name, email, password, role }),
+        body: JSON.stringify({ name, email, password, phone, role, invitationToken }),
       }
     );
     return data;
@@ -243,12 +268,12 @@ export const authAPI = {
     );
   },
 
-  forgotPassword: async (email: string) => {
-    return apiRequest<{ success: boolean; message?: string; error?: string; userId?: string }>(
+  forgotPassword: async (identifier: string, method: 'email' | 'phone' = 'email') => {
+    return apiRequest<{ success: boolean; message?: string; error?: string; userId?: string; accountEmail?: string }>(
       '/api/auth/forgot-password',
       {
         method: 'POST',
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ [method]: identifier }),
       }
     );
   },
@@ -274,6 +299,87 @@ export const authAPI = {
 
   getMe: async () => {
     return apiRequest<{ success: boolean; user: any; error?: string }>('/api/auth/me');
+  },
+
+  getAllUsers: async () => {
+    return apiRequest<{ 
+      success: boolean; 
+      count: number; 
+      usersByRole: Record<string, any[]>; 
+      roleCounts: Record<string, number>;
+      error?: string 
+    }>('/api/auth/users');
+  },
+
+  updateUserRole: async (userId: string, role: string) => {
+    return apiRequest<{ 
+      success: boolean; 
+      message: string;
+      data: any;
+      error?: string 
+    }>(`/api/auth/users/${userId}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role }),
+    });
+  },
+
+  inviteUser: async (email: string, role: string) => {
+    return apiRequest<{ 
+      success: boolean; 
+      message: string;
+      data: {
+        email: string;
+        role: string;
+        expiresAt: string;
+        invitationLink: string;
+      };
+      error?: string 
+    }>('/api/auth/invite', {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    });
+  },
+
+  verifyInvitation: async (token: string) => {
+    return apiRequest<{ 
+      success: boolean; 
+      data: {
+        email: string;
+        role: string;
+      };
+      error?: string 
+    }>(`/api/auth/invitation/${token}`);
+  },
+};
+
+// Role Permissions API
+export const rolePermissionsAPI = {
+  getAll: async () => {
+    return apiRequest<{ 
+      success: boolean; 
+      data: Record<string, any>;
+      error?: string 
+    }>('/api/role-permissions');
+  },
+
+  getByRole: async (role: string) => {
+    return apiRequest<{ 
+      success: boolean; 
+      data: any;
+      error?: string 
+    }>(`/api/role-permissions/${role}`);
+  },
+
+  update: async (role: string, permissions: any) => {
+    return apiRequest<{ 
+      success: boolean; 
+      message: string;
+      data: any;
+      error?: string 
+    }>(`/api/role-permissions/${role}`, {
+      method: 'PUT',
+      body: JSON.stringify({ permissions }),
+    });
   },
 };
 
@@ -402,11 +508,12 @@ export const jobsAPI = {
 
 // Dashboard API
 export const dashboardAPI = {
-  getSummary: async () => {
+  getSummary: async (days: number = 7) => {
     return apiRequest<{
       success: boolean;
       data: {
-        todayJobs: number;
+        periodJobs: number;
+        completedToday: number;
         jobsByStatus: {
           PENDING: number;
           IN_PROGRESS: number;
@@ -414,9 +521,10 @@ export const dashboardAPI = {
           DELIVERED: number;
         };
         totalCustomers: number;
-        todayRevenue: number;
+        periodRevenue: number;
+        days: number;
       };
-    }>('/api/dashboard/summary');
+    }>(`/api/dashboard/summary?days=${days}`);
   },
 };
 
@@ -591,6 +699,7 @@ export const invoicesAPI = {
     technician?: string;
     supervisor?: string;
     notes?: string;
+    terms?: string;
   }) => {
     return apiRequest<{ success: boolean; message: string; data: any }>(
       '/api/invoices',
@@ -618,6 +727,7 @@ export const invoicesAPI = {
     technician?: string;
     supervisor?: string;
     notes?: string;
+    terms?: string;
   }>) => {
     return apiRequest<{ success: boolean; message: string; data: any }>(
       `/api/invoices/${id}`,
@@ -633,6 +743,16 @@ export const invoicesAPI = {
       `/api/invoices/${id}`,
       {
         method: 'DELETE',
+      }
+    );
+  },
+
+  sendEmail: async (id: string, pdfBase64: string) => {
+    return apiRequest<{ success: boolean; message: string }>(
+      `/api/invoices/${id}/email`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ pdfBase64 }),
       }
     );
   },
@@ -801,10 +921,15 @@ export const catalogAPI = {
     type: 'service' | 'product';
     description?: string;
     cost: number;
+    basePrice?: number;
+    defaultDurationMinutes?: number;
     estimatedTime?: string;
     quantity?: number;
     unit?: string;
     visibility?: 'default' | 'local';
+    subOptions?: any[];
+    allowComments?: boolean;
+    allowedParts?: string[];
   }) => {
     return apiRequest<{ success: boolean; message: string; data: any }>(
       '/api/catalog',
@@ -820,10 +945,15 @@ export const catalogAPI = {
     type: 'service' | 'product';
     description?: string;
     cost: number;
+    basePrice?: number;
+    defaultDurationMinutes?: number;
     estimatedTime?: string;
     quantity?: number;
     unit?: string;
     isActive?: boolean;
+    subOptions?: any[];
+    allowComments?: boolean;
+    allowedParts?: string[];
   }>) => {
     return apiRequest<{ success: boolean; message: string; data: any }>(
       `/api/catalog/${id}`,
@@ -844,6 +974,78 @@ export const catalogAPI = {
   },
 };
 
+// Inventory API
+export const inventoryAPI = {
+  getAll: async (search?: string, category?: string, lowStock?: boolean) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (category) params.append('category', category);
+    if (lowStock) params.append('lowStock', 'true');
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<{ success: boolean; count: number; data: any[] }>(
+      `/api/inventory${query}`
+    );
+  },
+
+  getById: async (id: string) => {
+    return apiRequest<{ success: boolean; data: any }>(`/api/inventory/${id}`);
+  },
+
+  create: async (itemData: {
+    name: string;
+    sku?: string;
+    category?: string;
+    unit?: string;
+    currentStock?: number;
+    minStock?: number;
+    costPrice?: number;
+    salePrice?: number;
+  }) => {
+    return apiRequest<{ success: boolean; message: string; data: any }>(
+      '/api/inventory',
+      {
+        method: 'POST',
+        body: JSON.stringify(itemData),
+      }
+    );
+  },
+
+  update: async (id: string, itemData: Partial<{
+    name: string;
+    sku?: string;
+    category?: string;
+    unit?: string;
+    currentStock?: number;
+    minStock?: number;
+    costPrice?: number;
+    salePrice?: number;
+    isActive?: boolean;
+  }>) => {
+    return apiRequest<{ success: boolean; message: string; data: any }>(
+      `/api/inventory/${id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(itemData),
+      }
+    );
+  },
+
+  delete: async (id: string) => {
+    return apiRequest<{ success: boolean; message: string }>(
+      `/api/inventory/${id}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  },
+
+  getMovements: async (id: string) => {
+    return apiRequest<{ success: boolean; count: number; data: any[] }>(
+      `/api/inventory/${id}/movements`
+    );
+  },
+};
+
 // Settings API
 export const settingsAPI = {
   get: async () => {
@@ -858,7 +1060,7 @@ export const settingsAPI = {
     security?: any;
     advanced?: any;
   }) => {
-    return apiRequest<{ success: boolean; message: string; data: any }>(
+    return apiRequest<{ success: boolean; message: string; data: any; errors?: any }>(
       '/api/settings',
       {
         method: 'PUT',
@@ -891,3 +1093,4 @@ export const settingsAPI = {
     );
   },
 };
+

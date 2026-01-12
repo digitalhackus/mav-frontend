@@ -30,8 +30,9 @@ import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { Checkbox } from "./ui/checkbox";
 import { Plus, Edit, Trash2, Wrench, Package, Loader2, X } from "lucide-react";
-import { catalogAPI } from "../api/client";
+import { catalogAPI, inventoryAPI } from "../api/client";
 import { toast } from "sonner";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 
 interface SubOption {
   key: string;
@@ -52,20 +53,33 @@ interface CatalogItem {
   estimatedTime?: string;
   quantity?: number;
   unit?: string;
+  sku?: string;
+  category?: string;
   visibility: 'default' | 'local';
   isActive: boolean;
   subOptions?: SubOption[];
   allowComments?: boolean;
   allowedParts?: string[];
+  inventoryItemId?: string;
+  consumeQuantityPerUse?: number;
+}
+
+interface InventoryItem {
+  _id: string;
+  name: string;
+  sku?: string;
+  currentStock: number;
 }
 
 export function CatalogManagement() {
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<CatalogItem[]>([]);
   const [products, setProducts] = useState<CatalogItem[]>([]);
   const [showDialog, setShowDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<CatalogItem | null>(null);
   const [activeTab, setActiveTab] = useState<'services' | 'products'>('services');
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -77,15 +91,31 @@ export function CatalogManagement() {
     estimatedTime: "",
     quantity: "",
     unit: "piece",
+    sku: "",
+    category: "",
     visibility: 'local' as 'default' | 'local',
     subOptions: [] as SubOption[],
     allowComments: false,
     allowedParts: [] as string[],
+    inventoryItemId: "none",
+    consumeQuantityPerUse: "1",
   });
 
   useEffect(() => {
     fetchCatalog();
+    fetchInventoryItems();
   }, []);
+
+  const fetchInventoryItems = async () => {
+    try {
+      const response = await inventoryAPI.getAll();
+      if (response.success) {
+        setInventoryItems(response.data);
+      }
+    } catch (error: any) {
+      console.error("Failed to fetch inventory items:", error);
+    }
+  };
 
   const fetchCatalog = async () => {
     try {
@@ -117,10 +147,14 @@ export function CatalogManagement() {
         estimatedTime: item.estimatedTime || "",
         quantity: item.quantity?.toString() || "",
         unit: item.unit || "piece",
-        visibility: item.visibility,
+        sku: (item as any).sku || "",
+        category: (item as any).category || "",
+        visibility: item.visibility === 'default' ? 'local' : item.visibility, // When editing default, create local copy
         subOptions: item.subOptions || [],
         allowComments: item.allowComments || false,
         allowedParts: item.allowedParts || [],
+        inventoryItemId: item.inventoryItemId || "none",
+        consumeQuantityPerUse: item.consumeQuantityPerUse?.toString() || "1",
       });
     } else {
       setEditingItem(null);
@@ -138,6 +172,8 @@ export function CatalogManagement() {
         subOptions: [],
         allowComments: false,
         allowedParts: [],
+        inventoryItemId: "none",
+        consumeQuantityPerUse: "1",
       });
     }
     setShowDialog(true);
@@ -156,10 +192,14 @@ export function CatalogManagement() {
         estimatedTime: "",
         quantity: "",
         unit: "piece",
+        sku: "",
+        category: "",
         visibility: 'local',
         subOptions: [],
         allowComments: false,
         allowedParts: [],
+        inventoryItemId: "none",
+        consumeQuantityPerUse: "1",
       });
   };
 
@@ -188,12 +228,32 @@ export function CatalogManagement() {
       } else {
         itemData.quantity = formData.quantity ? parseFloat(formData.quantity) : 0;
         itemData.unit = formData.unit;
+        itemData.sku = formData.sku || undefined;
+        itemData.category = formData.category || undefined;
+      }
+
+      // Add inventory link if provided
+      if (formData.inventoryItemId && formData.inventoryItemId !== "none") {
+        itemData.inventoryItemId = formData.inventoryItemId;
+        itemData.consumeQuantityPerUse = parseFloat(formData.consumeQuantityPerUse) || 1;
       }
 
       if (editingItem) {
         const id = editingItem._id || editingItem.id;
-        await catalogAPI.update(id!, itemData);
-        toast.success("Catalog item updated successfully");
+        // If editing a default item, create a local copy instead
+        if (editingItem.visibility === 'default') {
+          // Create a local copy with updated price/duration
+          const localCopyData = {
+            ...itemData,
+            visibility: 'local',
+            name: itemData.name, // Keep same name
+          };
+          await catalogAPI.create(localCopyData);
+          toast.success("Local copy created with your custom price and duration");
+        } else {
+          await catalogAPI.update(id!, itemData);
+          toast.success("Catalog item updated successfully");
+        }
       } else {
         await catalogAPI.create(itemData);
         toast.success("Catalog item created successfully");
@@ -208,7 +268,15 @@ export function CatalogManagement() {
   };
 
   const handleDelete = async (item: CatalogItem) => {
-    if (!confirm(`Are you sure you want to delete "${item.name}"?`)) {
+    const confirmed = await confirm({
+      title: "Delete Catalog Item",
+      description: `Are you sure you want to delete "${item.name}"? This action cannot be undone.`,
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      variant: "destructive",
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -387,7 +455,14 @@ export function CatalogManagement() {
                         </>
                       )}
                       {item.visibility === 'default' && (
-                        <span className="text-xs text-slate-400">Default items cannot be edited</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleOpenDialog(item)}
+                          title="Edit price and duration (creates local copy)"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
                       )}
                     </div>
                   </TableCell>
@@ -407,7 +482,9 @@ export function CatalogManagement() {
             </DialogTitle>
             <DialogDescription>
               {editingItem
-                ? 'Update the catalog item details'
+                ? editingItem.visibility === 'default'
+                  ? 'Creating a local copy with your custom price and duration. The original default item will remain unchanged.'
+                  : 'Update the catalog item details'
                 : 'Create a new catalog item. Local items are only visible to your account.'}
             </DialogDescription>
           </DialogHeader>
@@ -420,26 +497,91 @@ export function CatalogManagement() {
                   id="name"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g., Oil Change"
+                  placeholder={formData.type === 'product' ? "e.g., 5W-30 Engine Oil" : "e.g., Oil Change"}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="type">Type *</Label>
-                <Select
-                  value={formData.type}
-                  onValueChange={(value: 'service' | 'product') => setFormData({ ...formData, type: value })}
-                  disabled={!!editingItem}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="service">Service</SelectItem>
-                    <SelectItem value="product">Product</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {formData.type === 'product' ? (
+                <div className="space-y-2">
+                  <Label htmlFor="sku">SKU</Label>
+                  <Input
+                    id="sku"
+                    value={formData.sku}
+                    onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                    placeholder="Optional product code"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="type">Type *</Label>
+                  <Select
+                    value={formData.type}
+                    onValueChange={(value: 'service' | 'product') => setFormData({ ...formData, type: value })}
+                    disabled={!!editingItem}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="service">Service</SelectItem>
+                      <SelectItem value="product">Product</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
+
+            {formData.type === 'product' && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="category">Category</Label>
+                  <Input
+                    id="category"
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    placeholder="e.g., Oil, Filter, Brake"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="unit">Unit</Label>
+                  <Select
+                    value={formData.unit}
+                    onValueChange={(value) => setFormData({ ...formData, unit: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="piece">Piece</SelectItem>
+                      <SelectItem value="liter">Liter</SelectItem>
+                      <SelectItem value="kg">Kilogram</SelectItem>
+                      <SelectItem value="box">Box</SelectItem>
+                      <SelectItem value="set">Set</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
+            {formData.type === 'service' && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="type">Type *</Label>
+                  <Select
+                    value={formData.type}
+                    onValueChange={(value: 'service' | 'product') => setFormData({ ...formData, type: value })}
+                    disabled={!!editingItem}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="service">Service</SelectItem>
+                      <SelectItem value="product">Product</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="description">Description</Label>
@@ -511,15 +653,6 @@ export function CatalogManagement() {
                       value={formData.quantity}
                       onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
                       placeholder="0"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="unit">Unit</Label>
-                    <Input
-                      id="unit"
-                      value={formData.unit}
-                      onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                      placeholder="e.g., piece, box, kg"
                     />
                   </div>
                 </>
@@ -641,7 +774,7 @@ export function CatalogManagement() {
                       onChange={(e) => {
                         setFormData({
                           ...formData,
-                          allowedParts: e.target.value.split('\n').filter(p => p.trim() !== '')
+                          allowedParts: e.target.value.split('\n')
                         });
                       }}
                       placeholder="Oil&#10;Oil Filter&#10;Air Filter"
@@ -655,12 +788,59 @@ export function CatalogManagement() {
               </>
             )}
 
+            <Separator />
+            <div className="space-y-4">
+              <Label className="text-base font-semibold">Inventory Link (Optional)</Label>
+              <p className="text-xs text-slate-500">
+                Link this catalog item to an inventory item to automatically deduct stock when used in invoices/jobs.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="inventoryItemId">Linked Inventory Item</Label>
+                  <Select
+                    value={formData.inventoryItemId}
+                    onValueChange={(value) => setFormData({ ...formData, inventoryItemId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select inventory item (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None (No inventory link)</SelectItem>
+                      {inventoryItems.map((item) => (
+                        <SelectItem key={item._id} value={item._id}>
+                          {item.name} {item.sku && `(${item.sku})`} - Stock: {item.currentStock}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {formData.inventoryItemId && formData.inventoryItemId !== "none" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="consumeQuantityPerUse">Quantity to Deduct per Use</Label>
+                    <Input
+                      id="consumeQuantityPerUse"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={formData.consumeQuantityPerUse}
+                      onChange={(e) => setFormData({ ...formData, consumeQuantityPerUse: e.target.value })}
+                      placeholder="e.g., 1, 4, 0.5"
+                    />
+                    <p className="text-xs text-slate-500">
+                      How much stock to deduct per use (e.g., 4 liters for oil change, 1 piece for filter)
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {!editingItem && (
               <div className="space-y-2">
                 <Label htmlFor="visibility">Visibility</Label>
                 <Select
                   value={formData.visibility}
                   onValueChange={(value: 'default' | 'local') => setFormData({ ...formData, visibility: value })}
+                  disabled={editingItem?.visibility === 'default'} // Disable when editing default (creates local copy)
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -687,6 +867,9 @@ export function CatalogManagement() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Confirm Dialog */}
+      <ConfirmDialog />
     </div>
   );
 }

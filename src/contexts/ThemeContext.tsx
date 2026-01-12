@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { settingsAPI } from '../api/client';
+import { getToken } from '../api/client';
 
 interface ThemeContextType {
   themeColor: string;
@@ -34,7 +35,23 @@ const getHoverColor = (color: string): string => {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [themeColor, setThemeColorState] = useState<string>(DEFAULT_THEME);
 
+  // Initialize default theme CSS variables on mount
+  useEffect(() => {
+    document.documentElement.style.setProperty('--theme-color', DEFAULT_THEME);
+    document.documentElement.style.setProperty('--theme-hover', getHoverColor(DEFAULT_THEME));
+  }, []);
+
   const refreshTheme = async () => {
+    // Only try to load theme if user is authenticated
+    const token = getToken();
+    if (!token) {
+      // No token - use default theme
+      setThemeColorState(DEFAULT_THEME);
+      document.documentElement.style.setProperty('--theme-color', DEFAULT_THEME);
+      document.documentElement.style.setProperty('--theme-hover', getHoverColor(DEFAULT_THEME));
+      return;
+    }
+
     try {
       const response = await settingsAPI.get();
       if (response.success && response.data?.workshop?.themeColor) {
@@ -47,8 +64,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         document.documentElement.style.setProperty('--theme-color', DEFAULT_THEME);
         document.documentElement.style.setProperty('--theme-hover', getHoverColor(DEFAULT_THEME));
       }
-    } catch (error) {
-      console.error('Error loading theme:', error);
+    } catch (error: any) {
+      // Silently handle errors - use default theme
+      // Only log non-auth errors (401/403 are expected when not logged in)
+      if (error?.status !== 401 && error?.status !== 403) {
+        console.error('Error loading theme:', error);
+      }
       setThemeColorState(DEFAULT_THEME);
       document.documentElement.style.setProperty('--theme-color', DEFAULT_THEME);
       document.documentElement.style.setProperty('--theme-hover', getHoverColor(DEFAULT_THEME));

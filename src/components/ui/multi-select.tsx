@@ -15,7 +15,7 @@ import {
   PopoverTrigger,
 } from "./popover";
 import { Button } from "./button";
-import { cn } from "./utils";
+import { cn } from "../../lib/utils";
 
 export interface MultiSelectOption {
   value: string;

@@ -25,14 +25,11 @@ import {
   AlertCircle,
   Server,
   Chrome,
-  Upload,
-  Palette,
   Info,
   CreditCard,
   Smartphone,
   Banknote,
   Receipt,
-  Store,
   Loader2,
   CheckCircle2,
   XCircle
@@ -40,15 +37,6 @@ import {
 import { settingsAPI } from "../api/client";
 import { toast } from "sonner";
 import { useTheme, getHoverColor } from "../contexts/ThemeContext";
-
-const themeColors = [
-  { name: "Blue", value: "#2563eb" },
-  { name: "Purple", value: "#7c3aed" },
-  { name: "Green", value: "#059669" },
-  { name: "Orange", value: "#ea580c" },
-  { name: "Red", value: "#dc2626" },
-  { name: "Pink", value: "#db2777" },
-];
 
 interface SettingsProps {
   userRole?: "Admin" | "Supervisor" | "Technician";
@@ -68,6 +56,15 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
   const [selectedColor, setSelectedColor] = useState("#c53032");
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
 
+  // Validation errors
+  const [errors, setErrors] = useState<{
+    businessName?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    taxRegistration?: string;
+  }>({});
+
   // Tax settings
   const [taxCash, setTaxCash] = useState(18);
   const [taxCard, setTaxCard] = useState(18);
@@ -79,7 +76,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
   const [overdueAlerts, setOverdueAlerts] = useState(true);
   const [overdueDays, setOverdueDays] = useState(7);
   const [jobCompletion, setJobCompletion] = useState(true);
-  const [whatsapp, setWhatsapp] = useState(false);
 
   // Email settings
   const [fromEmail, setFromEmail] = useState("");
@@ -89,7 +85,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
 
   // Security settings
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
-  const [sessionTimeout, setSessionTimeout] = useState(true);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -108,6 +103,96 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
   useEffect(() => {
     fetchSettings();
   }, []);
+
+  // Validation functions
+  const validatePhone = (phone: string): string | undefined => {
+    if (!phone || phone.trim() === "") {
+      return "Phone number is required";
+    }
+    // Remove spaces and check format
+    const cleaned = phone.replace(/\s/g, "");
+    // Check if starts with +92
+    if (!cleaned.startsWith("+92")) {
+      return "Phone number must start with +92";
+    }
+    // Check if it's exactly 13 characters (+92 + 10 digits)
+    if (cleaned.length !== 13) {
+      return "Phone number must be 10 digits after +92";
+    }
+    // Check if all characters after +92 are digits
+    const digits = cleaned.substring(3);
+    if (!/^\d{10}$/.test(digits)) {
+      return "Phone number must contain only digits after +92";
+    }
+    return undefined;
+  };
+
+  const validateEmail = (email: string): string | undefined => {
+    if (!email || email.trim() === "") {
+      return "Email address is required";
+    }
+    // Check for @ symbol
+    if (!email.includes("@")) {
+      return "Email must contain '@' symbol";
+    }
+    // Check for .com, .pk, or .org at the end
+    if (!email.endsWith(".com") && !email.endsWith(".pk") && !email.endsWith(".org")) {
+      return "Email must end with '.com', '.pk', or '.org'";
+    }
+    // Basic email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.(com|pk|org)$/;
+    if (!emailRegex.test(email)) {
+      return "Please enter a valid email address";
+    }
+    return undefined;
+  };
+
+  const validateNTN = (ntn: string): string | undefined => {
+    if (!ntn || ntn.trim() === "") {
+      return undefined; // NTN is optional
+    }
+    // NTN format: NTN-XXXXXXX-X (where X are digits)
+    const ntnRegex = /^NTN-\d{7}-\d$/;
+    if (!ntnRegex.test(ntn)) {
+      return "NTN must be in format: NTN-XXXXXXX-X (7 digits, dash, 1 digit)";
+    }
+    return undefined;
+  };
+
+  const validateWorkshopFields = (): boolean => {
+    const newErrors: typeof errors = {};
+
+    // Validate business name
+    if (!workshopName || workshopName.trim() === "") {
+      newErrors.businessName = "Business name is required";
+    }
+
+    // Validate phone
+    const phoneError = validatePhone(workshopPhone);
+    if (phoneError) {
+      newErrors.phone = phoneError;
+    }
+
+    // Validate email
+    const emailError = validateEmail(workshopEmail);
+    if (emailError) {
+      newErrors.email = emailError;
+    }
+
+    // Validate address
+    if (!workshopAddress || workshopAddress.trim() === "") {
+      newErrors.address = "Business address is required";
+    }
+
+    // Validate NTN (optional but must be correct format if provided)
+    const ntnError = validateNTN(taxRegistration);
+    if (ntnError) {
+      newErrors.taxRegistration = ntnError;
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const fetchSettings = async () => {
     try {
@@ -144,7 +229,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           setOverdueAlerts(data.notifications.overdueAlerts ?? true);
           setOverdueDays(data.notifications.overdueDays || 7);
           setJobCompletion(data.notifications.jobCompletion ?? true);
-          setWhatsapp(data.notifications.whatsapp ?? false);
         }
 
         // Load email settings
@@ -161,7 +245,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
         // Load security settings
         if (data.security) {
           setTwoFactorEnabled(data.security.twoFactorEnabled || false);
-          setSessionTimeout(data.security.sessionTimeout ?? true);
         }
 
         // Load advanced settings
@@ -177,25 +260,19 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
     }
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        toast.error("Logo file must be less than 2MB");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setLogoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const handleSaveWorkshop = async () => {
+    // Clear previous errors
+    setErrors({});
+
+    // Validate all fields
+    if (!validateWorkshopFields()) {
+      toast.error("Please fix the errors before saving");
+      return;
+    }
+
     try {
       setSaving("workshop");
-      await settingsAPI.update({
+      const response = await settingsAPI.update({
         workshop: {
           businessName: workshopName,
           phone: workshopPhone,
@@ -205,19 +282,51 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           themeColor: selectedColor,
           logo: logoPreview,
         },
+        advanced: {
+          marketplaceMode: marketplaceMode,
+        },
+      });
+
+      if (response.success) {
+        toast.success("Workshop settings saved successfully");
+        refreshTheme(); // Refresh theme after saving
+        // Clear errors on successful save
+        setErrors({});
+      } else {
+        // Handle backend validation errors
+        if (response.errors) {
+          setErrors(response.errors);
+          toast.error("Please fix the errors before saving");
+        } else {
+          toast.error(response.message || "Failed to save workshop settings");
+        }
+      }
+    } catch (error: any) {
+      // Handle backend validation errors
+      if (error.errors) {
+        setErrors(error.errors);
+        toast.error("Please fix the errors before saving");
+      } else {
+        toast.error(error.message || "Failed to save workshop settings");
+      }
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleSaveTax = async () => {
+    try {
+      setSaving("tax");
+      await settingsAPI.update({
         tax: {
           cash: taxCash,
           card: taxCard,
           online: taxOnline,
         },
-        advanced: {
-          marketplaceMode: marketplaceMode,
-        },
       });
-      toast.success("Workshop settings saved successfully");
-      refreshTheme(); // Refresh theme after saving
+      toast.success("Tax settings saved successfully");
     } catch (error: any) {
-      toast.error(error.message || "Failed to save workshop settings");
+      toast.error(error.message || "Failed to save tax settings");
     } finally {
       setSaving(null);
     }
@@ -233,7 +342,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           overdueAlerts,
           overdueDays,
           jobCompletion,
-          whatsapp,
         },
       });
       toast.success("Notification settings saved successfully");
@@ -287,7 +395,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
       await settingsAPI.update({
         security: {
           twoFactorEnabled,
-          sessionTimeout,
         },
       });
       toast.success("Security settings saved successfully");
@@ -359,7 +466,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           )}
           <TabsTrigger value="users" className="text-xs lg:text-sm">Users</TabsTrigger>
           <TabsTrigger value="notifications" className="text-xs lg:text-sm">Notifications</TabsTrigger>
-          <TabsTrigger value="email" className="text-xs lg:text-sm lg:col-span-1 col-start-1">Email</TabsTrigger>
           <TabsTrigger value="security" className="text-xs lg:text-sm">Security</TabsTrigger>
         </TabsList>
 
@@ -383,42 +489,85 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                 <CardContent className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="workshop-name">Business Name *</Label>
+                      <Label htmlFor="workshop-name">
+                        Business Name <span className="text-red-500">*</span>
+                      </Label>
                       <Input 
                         id="workshop-name" 
                         value={workshopName}
-                        onChange={(e) => setWorkshopName(e.target.value)}
+                        onChange={(e) => {
+                          setWorkshopName(e.target.value);
+                          if (errors.businessName) {
+                            setErrors({ ...errors, businessName: undefined });
+                          }
+                        }}
+                        className={errors.businessName ? "border-red-500" : ""}
                       />
+                      {errors.businessName && (
+                        <p className="text-sm text-red-500">{errors.businessName}</p>
+                      )}
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="workshop-phone">Phone Number *</Label>
+                      <Label htmlFor="workshop-phone">
+                        Phone Number <span className="text-red-500">*</span>
+                      </Label>
                       <Input 
                         id="workshop-phone" 
                         value={workshopPhone}
-                        onChange={(e) => setWorkshopPhone(e.target.value)}
-                        placeholder="+92 XXX XXXXXXX" 
+                        onChange={(e) => {
+                          setWorkshopPhone(e.target.value);
+                          if (errors.phone) {
+                            setErrors({ ...errors, phone: undefined });
+                          }
+                        }}
+                        placeholder="+92 XXX XXXXXXX"
+                        className={errors.phone ? "border-red-500" : ""}
                       />
+                      {errors.phone && (
+                        <p className="text-sm text-red-500">{errors.phone}</p>
+                      )}
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="workshop-email">Email Address *</Label>
+                    <Label htmlFor="workshop-email">
+                      Email Address <span className="text-red-500">*</span>
+                    </Label>
                     <Input 
                       id="workshop-email" 
                       type="email" 
                       value={workshopEmail}
-                      onChange={(e) => setWorkshopEmail(e.target.value)}
+                      onChange={(e) => {
+                        setWorkshopEmail(e.target.value);
+                        if (errors.email) {
+                          setErrors({ ...errors, email: undefined });
+                        }
+                      }}
+                      className={errors.email ? "border-red-500" : ""}
                     />
+                    {errors.email && (
+                      <p className="text-sm text-red-500">{errors.email}</p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="workshop-address">Business Address *</Label>
+                    <Label htmlFor="workshop-address">
+                      Business Address <span className="text-red-500">*</span>
+                    </Label>
                     <Textarea 
                       id="workshop-address" 
                       value={workshopAddress}
-                      onChange={(e) => setWorkshopAddress(e.target.value)}
-                      className="min-h-[80px]"
+                      onChange={(e) => {
+                        setWorkshopAddress(e.target.value);
+                        if (errors.address) {
+                          setErrors({ ...errors, address: undefined });
+                        }
+                      }}
+                      className={`min-h-[80px] ${errors.address ? "border-red-500" : ""}`}
                     />
+                    {errors.address && (
+                      <p className="text-sm text-red-500">{errors.address}</p>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -427,12 +576,23 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                       <Input 
                         id="tax-registration" 
                         value={taxRegistration}
-                        onChange={(e) => setTaxRegistration(e.target.value)}
+                        onChange={(e) => {
+                          setTaxRegistration(e.target.value);
+                          if (errors.taxRegistration) {
+                            setErrors({ ...errors, taxRegistration: undefined });
+                          }
+                        }}
                         placeholder="NTN-XXXXXXX-X"
+                        className={errors.taxRegistration ? "border-red-500" : ""}
                       />
+                      {errors.taxRegistration && (
+                        <p className="text-sm text-red-500">{errors.taxRegistration}</p>
+                      )}
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="currency">Default Currency *</Label>
+                      <Label htmlFor="currency">
+                        Default Currency <span className="text-red-500">*</span>
+                      </Label>
                       <Input id="currency" value="PKR (Rs)" disabled className="bg-slate-50" />
                     </div>
                   </div>
@@ -463,16 +623,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-3">
-                    <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium text-blue-900">Payment-Based Tax Rates</p>
-                      <p className="text-xs text-blue-700 mt-1">
-                        Different tax rates will be automatically applied based on the payment method selected during invoice creation.
-                      </p>
-                    </div>
-                  </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
@@ -525,153 +675,31 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                       <p className="text-xs text-slate-500">Applied for Online/Bank Transfer</p>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-
-              {/* Branding Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-100 rounded-lg">
-                      <Palette className="h-5 w-5 text-purple-600" />
-                    </div>
-                    <div>
-                      <CardTitle>Branding & Appearance</CardTitle>
-                      <p className="text-sm text-gray-600 mt-1">Customize your business logo and theme colors</p>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Logo Upload */}
-                  <div className="space-y-3">
-                    <Label>Business Logo</Label>
-                    <div className="flex flex-col sm:flex-row gap-4 items-start">
-                      {/* Logo Preview */}
-                      <div className="w-32 h-32 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center bg-slate-50">
-                        {logoPreview ? (
-                          <img src={logoPreview} alt="Logo preview" className="max-w-full max-h-full object-contain p-2" />
-                        ) : (
-                          <div className="text-center">
-                            <Building2 className="h-12 w-12 text-slate-400 mx-auto mb-2" />
-                            <p className="text-xs text-slate-500">No logo</p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Upload Button */}
-                      <div className="flex-1">
-                        <label htmlFor="logo-upload" className="cursor-pointer">
-                          <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-blue-400 hover:bg-blue-50 transition-all">
-                            <Upload className="h-8 w-8 text-slate-400 mx-auto mb-2" />
-                            <p className="text-sm font-medium text-slate-700">Click to upload logo</p>
-                            <p className="text-xs text-slate-500 mt-1">PNG, JPG up to 2MB</p>
-                          </div>
-                          <input
-                            id="logo-upload"
-                            type="file"
-                            accept="image/png,image/jpeg,image/jpg"
-                            className="hidden"
-                            onChange={handleLogoUpload}
-                          />
-                        </label>
-                        {logoPreview && (
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="mt-2 w-full"
-                            onClick={() => setLogoPreview(null)}
-                          >
-                            Remove Logo
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Theme Color */}
-                  <div className="space-y-3">
-                    <Label>Theme Color</Label>
-                    <p className="text-xs text-slate-500">Choose a primary color for your business theme</p>
-                    <div className="flex flex-wrap gap-3">
-                      {themeColors.map((color) => (
-                        <button
-                          key={color.value}
-                          onClick={() => {
-                            setSelectedColor(color.value);
-                            setThemeColor(color.value); // Update theme immediately for preview
-                          }}
-                          className={`relative w-12 h-12 rounded-lg transition-all hover:scale-110 ${
-                            selectedColor === color.value 
-                              ? 'ring-2 ring-offset-2 ring-slate-900' 
-                              : 'hover:ring-2 hover:ring-offset-2 hover:ring-slate-400'
-                          }`}
-                          style={{ backgroundColor: color.value }}
-                          title={color.name}
-                        >
-                          {selectedColor === color.value && (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <div className="w-5 h-5 rounded-full bg-white flex items-center justify-center">
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color.value }} />
-                              </div>
-                            </div>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                      <div 
-                        className="w-10 h-10 rounded-lg" 
-                        style={{ backgroundColor: selectedColor }}
-                      />
-                      <div>
-                        <p className="text-sm font-medium text-slate-900">Selected Color</p>
-                        <p className="text-xs text-slate-500 font-mono">{selectedColor}</p>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Advanced Settings Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-orange-100 rounded-lg">
-                      <Store className="h-5 w-5 text-orange-600" />
-                    </div>
-                    <div>
-                      <CardTitle>Advanced Settings</CardTitle>
-                      <p className="text-sm text-gray-600 mt-1">Additional features and configurations</p>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-start justify-between p-4 border border-slate-200 rounded-lg bg-slate-50">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <p className="font-medium text-slate-900">Enable Marketplace Mode</p>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Info className="h-4 w-4 text-slate-400 cursor-help" />
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            <p className="text-xs">Marketplace mode restricts system access to registered members only. Feature available in future release.</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-                      <p className="text-sm text-slate-600">
-                        Restrict access to members only (Coming Soon)
-                      </p>
-                      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">
-                        <AlertCircle className="h-3 w-3" />
-                        Future Release
-                      </div>
-                    </div>
-                    <Switch 
-                      checked={marketplaceMode}
-                      onCheckedChange={setMarketplaceMode}
-                      disabled
-                    />
+                  
+                  {/* Save Button */}
+                  <div className="flex justify-end pt-4 border-t mt-4">
+                    <Button 
+                      onClick={handleSaveTax}
+                      disabled={saving === "tax"}
+                      className="px-6"
+                      style={{ backgroundColor: themeColor }}
+                      onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => {
+                        const hoverColor = getHoverColor(themeColor);
+                        e.currentTarget.style.backgroundColor = hoverColor;
+                      }}
+                      onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => {
+                        e.currentTarget.style.backgroundColor = themeColor;
+                      }}
+                    >
+                      {saving === "tax" ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        "Save Tax Settings"
+                      )}
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -809,17 +837,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                 />
               </div>
 
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">WhatsApp Notifications</p>
-                  <p className="text-sm text-gray-600">Send notifications via WhatsApp</p>
-                </div>
-                <Switch 
-                  checked={whatsapp}
-                  onCheckedChange={setWhatsapp}
-                />
-              </div>
-
               {/* Sticky Footer */}
               <div className="sticky bottom-0 left-0 right-0 bg-white border-t pt-4 mt-6 flex justify-center gap-3">
                 <Button 
@@ -852,219 +869,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
           </Card>
         </TabsContent>
 
-        {/* Email Settings */}
-        <TabsContent value="email">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <Mail className="h-5 w-5 text-blue-600" />
-                </div>
-                <div>
-                  <CardTitle>Email Templates</CardTitle>
-                  <p className="text-sm text-gray-600 mt-1">Customize email templates for automated messages</p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6 pb-24">
-              {/* Info Banner */}
-              <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                  <p className="text-sm text-blue-700">
-                    Requires SMTP or Google/Outlook connection.
-                  </p>
-                </div>
-              </div>
-
-              {/* Email Template Fields */}
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email-from">From Email</Label>
-                  <Input 
-                    id="email-from" 
-                    type="email" 
-                    value={fromEmail}
-                    onChange={(e) => setFromEmail(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="email-signature">Email Signature</Label>
-                  <Textarea 
-                    id="email-signature" 
-                    rows={4}
-                    value={emailSignature}
-                    onChange={(e) => setEmailSignature(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-3">
-                  <Label>Invoice Email Template</Label>
-                  <div className="p-4 border rounded-lg bg-gray-50">
-                    <p className="text-sm mb-2">Subject: {invoiceSubject || 'Your Invoice #{invoice_number}'}</p>
-                    <p className="text-sm text-gray-600 whitespace-pre-line">
-                      {invoiceTemplate || 'Dear {customer_name},\n\nThank you for choosing Momentum AutoWorks. Please find your invoice attached.'}
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="invoice-subject">Invoice Subject</Label>
-                    <Input 
-                      id="invoice-subject"
-                      value={invoiceSubject}
-                      onChange={(e) => setInvoiceSubject(e.target.value)}
-                      placeholder="Your Invoice #{invoice_number}"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="invoice-template">Invoice Template</Label>
-                    <Textarea 
-                      id="invoice-template"
-                      value={invoiceTemplate}
-                      onChange={(e) => setInvoiceTemplate(e.target.value)}
-                      rows={4}
-                      placeholder="Dear {customer_name},&#10;&#10;Thank you for choosing Momentum AutoWorks. Please find your invoice attached."
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Connect Email Section */}
-              <div className="space-y-3">
-                <Label>Connect Email</Label>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* SMTP Card */}
-                  <Card className={`border-2 ${smtpConfigured ? 'border-green-300 bg-green-50' : 'hover:border-blue-300'} transition-colors`}>
-                    <CardContent className="p-4 flex flex-col items-center text-center space-y-3">
-                      <div className="p-3 bg-gray-100 rounded-lg">
-                        <Server className="h-6 w-6 text-gray-700" />
-                      </div>
-                      <div>
-                        <p className="font-medium">SMTP</p>
-                        <p className="text-xs text-gray-600 mt-1">Custom SMTP server</p>
-                      </div>
-                      {smtpConfigured ? (
-                        <div className="flex items-center gap-1 text-green-600 text-sm">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>Connected</span>
-                        </div>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="w-full"
-                          onClick={() => handleConnectEmail('smtp')}
-                          disabled={saving === 'email-smtp'}
-                        >
-                          {saving === 'email-smtp' ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            'Connect'
-                          )}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Google Card */}
-                  <Card className={`border-2 ${googleConfigured ? 'border-green-300 bg-green-50' : 'hover:border-blue-300'} transition-colors`}>
-                    <CardContent className="p-4 flex flex-col items-center text-center space-y-3">
-                      <div className="p-3 bg-red-100 rounded-lg">
-                        <Chrome className="h-6 w-6 text-red-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Google</p>
-                        <p className="text-xs text-gray-600 mt-1">Gmail integration</p>
-                      </div>
-                      {googleConfigured ? (
-                        <div className="flex items-center gap-1 text-green-600 text-sm">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>Connected</span>
-                        </div>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="w-full"
-                          onClick={() => handleConnectEmail('google')}
-                          disabled={saving === 'email-google'}
-                        >
-                          {saving === 'email-google' ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            'Connect'
-                          )}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Outlook Card */}
-                  <Card className={`border-2 ${outlookConfigured ? 'border-green-300 bg-green-50' : 'hover:border-blue-300'} transition-colors`}>
-                    <CardContent className="p-4 flex flex-col items-center text-center space-y-3">
-                      <div className="p-3 bg-blue-100 rounded-lg">
-                        <Mail className="h-6 w-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Outlook</p>
-                        <p className="text-xs text-gray-600 mt-1">Microsoft 365</p>
-                      </div>
-                      {outlookConfigured ? (
-                        <div className="flex items-center gap-1 text-green-600 text-sm">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>Connected</span>
-                        </div>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="w-full"
-                          onClick={() => handleConnectEmail('outlook')}
-                          disabled={saving === 'email-outlook'}
-                        >
-                          {saving === 'email-outlook' ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            'Connect'
-                          )}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-
-              {/* Sticky Footer */}
-              <div className="sticky bottom-0 left-0 right-0 bg-white border-t pt-4 mt-6 flex justify-center gap-3">
-                <Button 
-                  className="text-white"
-                  style={{ backgroundColor: themeColor }}
-                  onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => {
-                    const hoverColor = getHoverColor(themeColor);
-                    e.currentTarget.style.backgroundColor = hoverColor;
-                  }}
-                  onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => {
-                    e.currentTarget.style.backgroundColor = themeColor;
-                  }}
-                  onClick={handleSaveEmail}
-                  disabled={saving === "email"}
-                >
-                  {saving === "email" ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4 mr-2" />
-                      Save Email Settings
-                    </>
-                  )}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
 
         {/* Security Settings */}
         <TabsContent value="security">
@@ -1092,17 +896,6 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                 />
               </div>
 
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">Session Timeout</p>
-                  <p className="text-sm text-gray-600">Auto logout after 30 minutes of inactivity</p>
-                </div>
-                <Switch 
-                  checked={sessionTimeout}
-                  onCheckedChange={setSessionTimeout}
-                />
-              </div>
-
               <div className="space-y-2">
                 <Label htmlFor="current-password">Current Password</Label>
                 <Input 
@@ -1110,6 +903,7 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                   type="password" 
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
+                  autoComplete="off"
                 />
               </div>
 
@@ -1121,6 +915,7 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                     type="password" 
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
                   />
                 </div>
                 <div className="space-y-2">
@@ -1130,6 +925,7 @@ export function Settings({ userRole = "Admin" }: SettingsProps) {
                     type="password" 
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
                   />
                 </div>
               </div>

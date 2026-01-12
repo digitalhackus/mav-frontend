@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -11,8 +12,10 @@ import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Checkbox } from "./ui/checkbox";
 import { Progress } from "./ui/progress";
 import { ScrollArea } from "./ui/scroll-area";
-import { customersAPI, vehiclesAPI, invoicesAPI, jobsAPI, commentsAPI, catalogAPI } from "../api/client";
+import { customersAPI, vehiclesAPI, invoicesAPI, jobsAPI, commentsAPI, catalogAPI, inventoryAPI, settingsAPI } from "../api/client";
+import { useAuth } from "../contexts/AuthContext";
 import { connectSocket, onCommentAdded } from "../lib/socket";
+import { formatCustomerId, formatVehicleId, formatJobId, formatInvoiceId } from "../utils/idFormatter";
 import { Loader2 } from "lucide-react";
 import {
   Dialog,
@@ -169,6 +172,28 @@ const parseEstimatedTimeToMinutes = (time?: string) => {
   return Number.isFinite(minutes) ? minutes : 0;
 };
 
+// Helper function to format minutes to display string (e.g., "30 min", "1 hour 30 min")
+const formatDurationFromMinutes = (minutes: number): string => {
+  if (!minutes || minutes === 0) return "";
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  
+  if (hours > 0 && mins > 0) {
+    return `${hours} hour${hours > 1 ? 's' : ''} ${mins} min${mins > 1 ? 's' : ''}`;
+  } else if (hours > 0) {
+    return `${hours} hour${hours > 1 ? 's' : ''}`;
+  } else {
+    return `${mins} min${mins > 1 ? 's' : ''}`;
+  }
+};
+
+// Helper function to check if a string is a valid MongoDB ObjectId
+const isValidObjectId = (id: any): boolean => {
+  if (!id || typeof id !== 'string') return false;
+  // MongoDB ObjectId is 24 hex characters
+  return /^[0-9a-fA-F]{24}$/.test(id);
+};
+
 const normalizeServiceDetails = (service: any) => {
   if (!service) return service;
 
@@ -211,13 +236,22 @@ const normalizeServiceDetails = (service: any) => {
   const normalizedDurationMinutes =
     rest.durationMinutes ?? parseEstimatedTimeToMinutes(rest.estimatedTime);
 
+  // Validate serviceId - only set if it's a valid ObjectId, otherwise set to null
+  let serviceId: string | null = null;
+  const candidateServiceId = rest.serviceId || rest.catalogId;
+  if (candidateServiceId) {
+    const serviceIdStr = String(candidateServiceId);
+    serviceId = isValidObjectId(serviceIdStr) ? serviceIdStr : null;
+  }
+
   return {
     ...rest,
     estimatedCost: Number(rest.estimatedCost ?? normalizedPrice),
     price: normalizedPrice,
     durationMinutes: normalizedDurationMinutes,
     details: normalizedDetails,
-    serviceId: rest.serviceId || rest.catalogId || null,
+    serviceId: serviceId,
+    catalogId: rest.catalogId || null, // Keep catalogId as string for reference
     completed: rest.completed ?? false,
   };
 };
@@ -317,21 +351,85 @@ const defaultComments = [
 ];
 
 export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "Admin" }: JobCardDetailProps) {
+  const [searchParams] = useSearchParams();
+  const { user } = useAuth();
   const isNewJobCard = !jobCard;
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(isNewJobCard); // New jobs start in edit mode, existing jobs start in view mode
+  
+  // Get initial values from URL params if present
+  const urlCustomerId = searchParams.get('customerId') || '';
+  const urlVehicleId = searchParams.get('vehicleId') || '';
+  
+  // localStorage key for draft job card
+  const DRAFT_STORAGE_KEY = 'jobCardDraft';
+  
+  // Helper function to load draft from localStorage
+  const loadDraft = () => {
+    if (isNewJobCard) {
+      try {
+        const draft = localStorage.getItem(DRAFT_STORAGE_KEY);
+        if (draft) {
+          return JSON.parse(draft);
+        }
+      } catch (error) {
+        console.error('Failed to load draft:', error);
+      }
+    }
+    return null;
+  };
+  
+  // Helper function to save draft to localStorage
+  const saveDraft = (draftData: any) => {
+    if (isNewJobCard) {
+      try {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftData));
+      } catch (error) {
+        console.error('Failed to save draft:', error);
+      }
+    }
+  };
+  
+  // Helper function to clear draft from localStorage
+  const clearDraft = () => {
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch (error) {
+      console.error('Failed to clear draft:', error);
+    }
+  };
+  
+  // Load draft data on mount
+  const draftData = loadDraft();
   
   // Form state
   const [jobId, setJobId] = useState(jobCard?._id || jobCard?.id || "");
   const [status, setStatus] = useState<string>(jobCard?.status || "PENDING");
   const [selectedCustomerId, setSelectedCustomerId] = useState(
-    jobCard?.customer?._id || jobCard?.customer?.id || jobCard?.customer || ""
+    urlCustomerId || draftData?.selectedCustomerId || jobCard?.customer?._id || jobCard?.customer?.id || jobCard?.customer || ""
   );
-  const [selectedVehicleId, setSelectedVehicleId] = useState("");
-  const [selectedTechnicianId, setSelectedTechnicianId] = useState(jobCard?.technician || "");
-  const [selectedSupervisorId, setSelectedSupervisorId] = useState(jobCard?.supervisor || "");
-  const [selectedServices, setSelectedServices] = useState<any[]>(() => normalizeServices(jobCard?.services || []));
-  const [customService, setCustomService] = useState({ name: "", cost: "", time: "" });
+  const [selectedVehicleId, setSelectedVehicleId] = useState(urlVehicleId || draftData?.selectedVehicleId || "");
+  const [selectedTechnicianId, setSelectedTechnicianId] = useState(draftData?.selectedTechnicianId || jobCard?.technician || "");
+  const [selectedSupervisorId, setSelectedSupervisorId] = useState(draftData?.selectedSupervisorId || jobCard?.supervisor || "");
+  const [selectedServices, setSelectedServices] = useState<any[]>(() => {
+    if (draftData?.selectedServices) {
+      return normalizeServices(draftData.selectedServices);
+    }
+    return normalizeServices(jobCard?.services || []);
+  });
+  const [customService, setCustomService] = useState({ 
+    name: "", 
+    cost: "", 
+    time: "",
+    subServices: [] as Array<{ id: string; name: string; details: string; cost?: string }>,
+    serviceDetails: [] as Array<{ 
+      id: string; 
+      key: string; 
+      label: string; 
+      type: 'text' | 'select' | 'multiselect'; 
+      options: string[] 
+    }>
+  });
   const [showCustomService, setShowCustomService] = useState(false);
   const [customers, setCustomers] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<any[]>([]);
@@ -357,7 +455,10 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
   const [newVehicleErrors, setNewVehicleErrors] = useState<Record<string, string>>({});
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [editingServiceCost, setEditingServiceCost] = useState<string>("");
-  const [notes, setNotes] = useState<string>(jobCard?.notes || "");
+  const [editingServiceTime, setEditingServiceTime] = useState<string>("");
+  const [serviceSearchOpen, setServiceSearchOpen] = useState(false);
+  const [serviceSearchQuery, setServiceSearchQuery] = useState("");
+  const [notes, setNotes] = useState<string>(draftData?.notes || jobCard?.notes || "");
   
   // Oil Change details dialog state (legacy - kept for backward compatibility)
   const [showOilChangeDialog, setShowOilChangeDialog] = useState(false);
@@ -377,7 +478,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
   const [catalogItemForService, setCatalogItemForService] = useState<any>(null);
   
   // Overall service comment
-  const [overallServiceComment, setOverallServiceComment] = useState<string>(jobCard?.overallServiceComment || "");
+  const [overallServiceComment, setOverallServiceComment] = useState<string>(draftData?.overallServiceComment || jobCard?.overallServiceComment || "");
   const [showServiceCommentDialog, setShowServiceCommentDialog] = useState(false);
   
   // Comments/Activity Feed
@@ -389,7 +490,14 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
   const [uploadedFiles, setUploadedFiles] = useState<any[]>(jobCard?.files || []);
   const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
+  const [businessProfile, setBusinessProfile] = useState({
+    name: "MOMENTUM AUTOWORKS",
+    address: "",
+    phone: "+92 300 1234567",
+    email: "info@momentumauto.pk",
+  });
   const [catalogServices, setCatalogServices] = useState<any[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<Record<string, any>>({}); // Map of inventoryItemId -> inventory item
   
   // Collapsible sections
   const [sectionsOpen, setSectionsOpen] = useState({
@@ -405,16 +513,59 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
     fetchCustomers();
   }, []);
 
-  // Fetch catalog services on mount
+  // Fetch catalog services and inventory items on mount
   useEffect(() => {
     fetchCatalogServices();
+    fetchInventoryItems();
   }, []);
+
+  // Fetch business profile from settings
+  useEffect(() => {
+    const fetchBusinessProfile = async () => {
+      try {
+        const response = await settingsAPI.get();
+        if (response.success && response.data?.workshop) {
+          const workshop = response.data.workshop;
+          setBusinessProfile({
+            name: (workshop.businessName || "MOMENTUM AUTOWORKS").toUpperCase(),
+            address: workshop.address || "",
+            phone: workshop.phone || "+92 300 1234567",
+            email: workshop.email || "info@momentumauto.pk",
+          });
+        }
+      } catch (error) {
+        console.error("Failed to fetch business profile:", error);
+      }
+    };
+    fetchBusinessProfile();
+  }, []);
+
+  const fetchInventoryItems = async () => {
+    try {
+      const response = await inventoryAPI.getAll();
+      if (response.success) {
+        // Create a map of inventory items by ID for quick lookup
+        const inventoryMap: Record<string, any> = {};
+        response.data.forEach((item: any) => {
+          inventoryMap[item._id] = item;
+        });
+        setInventoryItems(inventoryMap);
+      }
+    } catch (error) {
+      console.error("Failed to fetch inventory items:", error);
+    }
+  };
 
   const fetchCatalogServices = async () => {
     try {
       const response = await catalogAPI.getAll();
       if (response.success) {
         // Map catalog data to the format expected by the component
+        // IMPORTANT: This includes ALL services shown together:
+        // 1. Past/default services (original services)
+        // 2. Previously added custom services (by the current user)
+        // 3. New custom services (just added)
+        // All services are preserved and displayed together in alphabetical order
         const services = response.data
           .filter((item: any) => item.type === 'service' && item.isActive) // Only show active services
           .map((item: any) => ({
@@ -429,6 +580,10 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
             subOptions: item.subOptions || [],
             allowComments: item.allowComments || false,
             allowedParts: item.allowedParts || [],
+            visibility: item.visibility || 'local', // 'default' or 'local'
+            account: item.account || null, // User ID who owns this service
+            inventoryItemId: item.inventoryItemId || null, // Link to inventory item
+            consumeQuantityPerUse: item.consumeQuantityPerUse || 1, // Quantity to deduct per use
           }));
         setCatalogServices(services);
       }
@@ -438,6 +593,34 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
       setCatalogServices(mockServices);
     }
   };
+
+  // Show notification when draft is restored
+  useEffect(() => {
+    if (isNewJobCard && draftData && (draftData.selectedCustomerId || draftData.selectedServices?.length > 0)) {
+      toast.info("Draft restored from previous session", {
+        description: "Your previous work has been restored. You can continue where you left off.",
+        duration: 3000,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
+
+  // Save draft to localStorage whenever form state changes (only for new job cards)
+  useEffect(() => {
+    if (isNewJobCard) {
+      const draft = {
+        selectedCustomerId,
+        selectedVehicleId,
+        selectedTechnicianId,
+        selectedSupervisorId,
+        selectedServices,
+        notes,
+        overallServiceComment,
+        status,
+      };
+      saveDraft(draft);
+    }
+  }, [selectedCustomerId, selectedVehicleId, selectedTechnicianId, selectedSupervisorId, selectedServices, notes, overallServiceComment, status, isNewJobCard]);
 
   // Fetch vehicles when customer is selected
   useEffect(() => {
@@ -454,12 +637,21 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
           if (foundVehicle) {
             setSelectedVehicleId(foundVehicle._id || foundVehicle.id);
           }
+        } else if (isNewJobCard && draftData?.selectedVehicleId && fetchedVehicles.length > 0) {
+          // Restore vehicle from draft if available (only for new job cards)
+          const foundVehicle = fetchedVehicles.find((v: any) => 
+            (v._id || v.id) === draftData.selectedVehicleId
+          );
+          if (foundVehicle && !selectedVehicleId) {
+            setSelectedVehicleId(draftData.selectedVehicleId);
+          }
         }
       });
     } else {
       setVehicles([]);
       setSelectedVehicleId("");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCustomerId]);
 
   // Initialize from jobCard if editing - reload when jobCard changes
@@ -713,7 +905,8 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
 
   const handleSelectVehicle = (vehicleId: string) => {
     if (vehicleId === "add-vehicle") {
-      setShowAddVehicleDialog(true);
+      // Open Add Vehicle dialog with the currently selected customer pre-filled
+      openAddVehicle(selectedCustomerId);
       setVehicleSearchOpen(false);
       setVehicleSearchQuery("");
       return;
@@ -989,6 +1182,38 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
     setShowOilChangeDialog(true);
   };
 
+  const handleAddInventoryItem = (inventoryItem: any) => {
+    const alreadySelected = selectedServices.some(
+      (selected) =>
+        selected.inventoryItemId === inventoryItem._id ||
+        (selected.name === inventoryItem.name && selected.isInventoryItem)
+    );
+
+    if (alreadySelected) {
+      return;
+    }
+
+    // Create a service-like object from inventory item
+    const newService = normalizeServiceDetails({
+      id: `inventory-${Date.now()}`,
+      name: inventoryItem.name,
+      estimatedCost: inventoryItem.salePrice || 0,
+      price: inventoryItem.salePrice || 0,
+      estimatedTime: '',
+      durationMinutes: 0,
+      details: {},
+      completed: false,
+      isInventoryItem: true,
+      inventoryItemId: inventoryItem._id,
+      inventoryItem: inventoryItem, // Store full inventory item for reference
+      sku: inventoryItem.sku,
+      category: inventoryItem.category,
+      unit: inventoryItem.unit,
+    });
+    
+    setSelectedServices(normalizeServices([...selectedServices, newService]));
+  };
+
   const handleAddService = (service: any) => {
     const alreadySelected = selectedServices.some(
       (selected) =>
@@ -1025,15 +1250,22 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
     }
 
     // For simple services without sub-options, add directly
+    // Use basePrice from catalog if available, otherwise use cost
+    const servicePrice = catalogItem?.basePrice ?? service.basePrice ?? service.cost ?? service.price ?? 0;
+    // Use defaultDurationMinutes from catalog if available, otherwise parse estimatedTime
+    const serviceDurationMinutes = catalogItem?.defaultDurationMinutes ?? service.defaultDurationMinutes ?? service.durationMinutes ?? parseEstimatedTimeToMinutes(service.estimatedTime);
+    // Use estimatedTime from catalog for display
+    const serviceEstimatedTime = (catalogItem?.estimatedTime ?? service.estimatedTime) || (serviceDurationMinutes ? formatDurationFromMinutes(serviceDurationMinutes) : "");
+    
     const newService = normalizeServiceDetails({
       ...service,
       id: `service-${Date.now()}`,
       serviceId: service._id || service.id,
       catalogId: service._id || service.id,
-      estimatedCost: service.estimatedCost ?? service.cost ?? 0,
-      price: service.cost ?? service.price ?? service.estimatedCost ?? 0,
-      estimatedTime: service.estimatedTime || "",
-      durationMinutes: service.durationMinutes ?? parseEstimatedTimeToMinutes(service.estimatedTime),
+      estimatedCost: servicePrice,
+      price: servicePrice,
+      estimatedTime: serviceEstimatedTime,
+      durationMinutes: serviceDurationMinutes,
       details: {},
       completed: false,
     });
@@ -1076,15 +1308,24 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
 
     if (!pendingOilChangeService) return;
 
+    // Get catalog item to use basePrice and defaultDurationMinutes
+    const catalogItemForOil = catalogServices.find(
+      (item: any) => (item._id || item.id) === (pendingOilChangeService._id || pendingOilChangeService.id)
+    ) || pendingOilChangeService;
+    
+    const oilServicePrice = catalogItemForOil?.basePrice ?? pendingOilChangeService.basePrice ?? pendingOilChangeService.cost ?? pendingOilChangeService.price ?? 0;
+    const oilServiceDurationMinutes = catalogItemForOil?.defaultDurationMinutes ?? pendingOilChangeService.defaultDurationMinutes ?? pendingOilChangeService.durationMinutes ?? parseEstimatedTimeToMinutes(pendingOilChangeService.estimatedTime);
+    const oilServiceEstimatedTime = (catalogItemForOil?.estimatedTime ?? pendingOilChangeService.estimatedTime) || (oilServiceDurationMinutes ? formatDurationFromMinutes(oilServiceDurationMinutes) : "");
+    
     const newService = normalizeServiceDetails({
       ...pendingOilChangeService,
       id: `service-${Date.now()}`,
       serviceId: pendingOilChangeService._id || pendingOilChangeService.id,
       catalogId: pendingOilChangeService.id,
-      estimatedCost: pendingOilChangeService.estimatedCost ?? pendingOilChangeService.cost ?? 0,
-      price: pendingOilChangeService.cost ?? pendingOilChangeService.price ?? pendingOilChangeService.estimatedCost ?? 0,
-      estimatedTime: pendingOilChangeService.estimatedTime || "",
-      durationMinutes: pendingOilChangeService.durationMinutes ?? parseEstimatedTimeToMinutes(pendingOilChangeService.estimatedTime),
+      estimatedCost: oilServicePrice,
+      price: oilServicePrice,
+      estimatedTime: oilServiceEstimatedTime,
+      durationMinutes: oilServiceDurationMinutes,
       details: detailsPayload,
       completed: false,
     });
@@ -1170,15 +1411,20 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
     }
 
     // Add new service
+    // Use catalog values for price and duration
+    const servicePrice = catalogItemForService?.basePrice ?? pendingServiceDetails.basePrice ?? pendingServiceDetails.cost ?? pendingServiceDetails.price ?? 0;
+    const serviceDurationMinutes = catalogItemForService?.defaultDurationMinutes ?? pendingServiceDetails.defaultDurationMinutes ?? pendingServiceDetails.durationMinutes ?? parseEstimatedTimeToMinutes(pendingServiceDetails.estimatedTime);
+    const serviceEstimatedTime = (catalogItemForService?.estimatedTime ?? pendingServiceDetails.estimatedTime) || (serviceDurationMinutes ? formatDurationFromMinutes(serviceDurationMinutes) : "");
+    
     const newService = normalizeServiceDetails({
       ...pendingServiceDetails,
       id: `service-${Date.now()}`,
       serviceId: pendingServiceDetails._id || pendingServiceDetails.id,
       catalogId: pendingServiceDetails.id,
-      estimatedCost: pendingServiceDetails.estimatedCost ?? pendingServiceDetails.cost ?? 0,
-      price: pendingServiceDetails.cost ?? pendingServiceDetails.price ?? pendingServiceDetails.estimatedCost ?? 0,
-      estimatedTime: pendingServiceDetails.estimatedTime || "",
-      durationMinutes: pendingServiceDetails.durationMinutes ?? parseEstimatedTimeToMinutes(pendingServiceDetails.estimatedTime),
+      estimatedCost: servicePrice,
+      price: servicePrice,
+      estimatedTime: serviceEstimatedTime,
+      durationMinutes: serviceDurationMinutes,
       details: {},
       completed: false,
       ...serviceData,
@@ -1208,24 +1454,118 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
     setShowServiceCommentDialog(false);
   };
 
-  const handleAddCustomService = () => {
-    if (!customService.name || !customService.cost) return;
+  const handleAddCustomService = async () => {
+    if (!customService.name || !customService.cost) {
+      toast.error("Service name and cost are required");
+      return;
+    }
     
     const parsedCost = parseFloat(customService.cost);
+    const durationMinutes = parseEstimatedTimeToMinutes(customService.time);
+    
+    try {
+      // Prepare description with sub-services information
+      let description = '';
+      if (customService.subServices && customService.subServices.length > 0) {
+        // Store sub-services as JSON in description for retrieval
+        const subServicesData = customService.subServices
+          .filter(sub => sub.name.trim() !== '') // Only include sub-services with names
+          .map(sub => ({
+            name: sub.name,
+            details: sub.details,
+            cost: sub.cost ? parseFloat(sub.cost) : undefined
+          }));
+        
+        if (subServicesData.length > 0) {
+          description = JSON.stringify({ subServices: subServicesData });
+        }
+      }
+      
+      // Prepare subOptions from serviceDetails (service details like oil type, filter type, etc.)
+      const subOptions = (customService.serviceDetails || [])
+        .filter(detail => detail.label.trim() !== '') // Only include details with labels
+        .map(detail => ({
+          key: detail.key,
+          label: detail.label,
+          type: detail.type,
+          options: detail.options || []
+        }));
+
+      // Save custom service to catalog database
+      const serviceData = {
+        name: customService.name,
+        type: 'service',
+        description: description,
+        cost: parsedCost,
+        basePrice: parsedCost,
+        defaultDurationMinutes: durationMinutes,
+        estimatedTime: customService.time || '',
+        visibility: 'local',
+        subOptions: subOptions, // Service details/options saved here
+        allowComments: false,
+        allowedParts: []
+      };
+
+      const response = await catalogAPI.create(serviceData);
+      
+      if (response.success) {
+        const catalogItem = response.data;
     const newService = normalizeServiceDetails({
-      id: `custom-${Date.now()}`,
+          id: `service-${Date.now()}`,
+          _id: catalogItem._id || catalogItem.id,
       name: customService.name,
       estimatedCost: parsedCost,
       price: parsedCost,
       estimatedTime: customService.time || "N/A",
-      durationMinutes: parseEstimatedTimeToMinutes(customService.time),
-      catalogId: undefined,
+          durationMinutes: durationMinutes,
+          serviceId: catalogItem._id || catalogItem.id,
+          catalogId: catalogItem._id || catalogItem.id,
       completed: false,
       details: {},
     });
     setSelectedServices(normalizeServices([...selectedServices, newService]));
-    setCustomService({ name: "", cost: "", time: "" });
+        
+        // Refresh catalog services list
+        await fetchCatalogServices();
+        
+    setCustomService({ name: "", cost: "", time: "", subServices: [], serviceDetails: [] });
     setShowCustomService(false);
+        toast.success("Custom service added to catalog");
+      } else {
+        throw new Error("Failed to save service to catalog");
+      }
+    } catch (error: any) {
+      console.error("Failed to save custom service:", error);
+      toast.error(error.message || "Failed to save custom service. Please try again.");
+    }
+  };
+
+  const handleDeleteCustomService = async (service: any, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent service selection when clicking delete
+    
+    const serviceId = service._id || service.id;
+    const serviceName = service.name;
+    
+    if (!confirm(`Are you sure you want to delete "${serviceName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const response = await catalogAPI.delete(serviceId);
+      if (response.success) {
+        toast.success(`Custom service "${serviceName}" deleted successfully`);
+        // Refresh catalog services list
+        await fetchCatalogServices();
+        // Close the service search dropdown
+        setServiceSearchOpen(false);
+        setServiceSearchQuery("");
+      } else {
+        throw new Error("Failed to delete service");
+      }
+    } catch (error: any) {
+      console.error("Failed to delete custom service:", error);
+      toast.error(error.message || "Failed to delete custom service. Please try again.");
+    }
   };
 
   const toggleServiceComplete = async (serviceId: string) => {
@@ -1273,6 +1613,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
   const cancelEditingServiceCost = () => {
     setEditingServiceId(null);
     setEditingServiceCost("");
+    setEditingServiceTime("");
   };
 
   const saveEditingServiceCost = () => {
@@ -1280,7 +1621,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
 
     const parsed = parseFloat(editingServiceCost);
     if (Number.isNaN(parsed) || parsed < 0) {
-      alert("Enter a valid price.");
+      toast.error("Enter a valid price.");
       return;
     }
 
@@ -1290,6 +1631,41 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
         : service
     )));
     setEditingServiceId(null);
+    setEditingServiceCost("");
+    setEditingServiceTime("");
+  };
+
+  const startEditingServiceTime = (serviceId: string, currentTime: string) => {
+    setEditingServiceId(serviceId);
+    setEditingServiceTime(currentTime || "");
+  };
+
+  const cancelEditingServiceTime = () => {
+    setEditingServiceId(null);
+    setEditingServiceTime("");
+    setEditingServiceCost("");
+  };
+
+  const saveEditingServiceTime = () => {
+    if (!editingServiceId) return;
+
+    if (!editingServiceTime.trim()) {
+      toast.error("Enter a valid time.");
+      return;
+    }
+
+    const durationMinutes = parseEstimatedTimeToMinutes(editingServiceTime);
+    setSelectedServices(normalizeServices(selectedServices.map(service =>
+      service.id === editingServiceId
+        ? { 
+            ...service, 
+            estimatedTime: editingServiceTime,
+            durationMinutes: durationMinutes
+          }
+        : service
+    )));
+    setEditingServiceId(null);
+    setEditingServiceTime("");
     setEditingServiceCost("");
   };
 
@@ -1433,11 +1809,29 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
       await jobsAPI.update(jobId, jobUpdateData);
 
       // 2. Create invoice automatically
-      const invoiceItems = selectedServices.map(service => ({
+      const invoiceItems = selectedServices.map(service => {
+        // For inventory items, we need to create a catalog item reference or handle differently
+        // For now, we'll create the invoice item with the inventory item info
+        const item: any = {
         description: service.name || "Service",
         quantity: 1,
         price: Number(service.estimatedCost) || 0
-      }));
+        };
+        
+        // If it's an inventory item, we need to link it properly
+        // For inventory items added directly, we'll need to create a temporary catalog link
+        // or handle stock deduction differently in the backend
+        if (service.isInventoryItem && service.inventoryItemId) {
+          // Note: The backend will need to handle inventory items differently
+          // For now, we'll include the inventory item ID in the description or as metadata
+          item.inventoryItemId = service.inventoryItemId;
+        } else if (service.serviceId || service.catalogId) {
+          // For regular services, include the catalog item ID
+          item.catalogItemId = service.serviceId || service.catalogId;
+        }
+        
+        return item;
+      });
 
       const invoiceData = {
         customer: selectedCustomerId,
@@ -1594,6 +1988,11 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
       overallServiceComment: overallServiceComment || undefined,
     };
 
+    // Clear draft after successful save
+    if (isNewJobCard) {
+      clearDraft();
+    }
+    
     onSave?.(jobCardData);
     if (isEditMode && !isNewJobCard) {
       setIsEditMode(false); // Exit edit mode after saving
@@ -1668,9 +2067,10 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
   };
 
   const canMarkSubtasks = !isNewJobCard && (userRole === "Technician" || userRole === "Supervisor" || userRole === "Admin");
-  // Technicians can mark services complete even in view mode (read-first, but interactive for completion)
-  // Technicians can always mark services complete (even in view mode), Supervisors/Admins need edit mode
-  const canMarkServicesComplete = canMarkSubtasks && (userRole === "Technician" || isFieldEditable);
+  // When job is IN_PROGRESS, all authorized users can mark services complete without edit mode
+  // Technicians can always mark services complete (even in view mode), Supervisors/Admins can mark when IN_PROGRESS or in edit mode
+  const isInProgress = status === "IN_PROGRESS";
+  const canMarkServicesComplete = canMarkSubtasks && (userRole === "Technician" || isInProgress || isFieldEditable);
 
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
@@ -1909,7 +2309,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                               {customer.email && (
                                                 <span className="text-xs text-gray-400">{customer.email}</span>
                                               )}
-                                              <span className="text-xs text-gray-400 mt-0.5">ID: {customerId.slice(-6)}</span>
+                                              <span className="text-xs text-gray-400 mt-0.5">ID: {formatCustomerId(customer)}</span>
                                             </div>
                                           </CommandItem>
                                         );
@@ -1937,7 +2337,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <Badge variant="outline" className="text-xs">
-                                    {(selectedCustomer?._id || selectedCustomer?.id)?.slice(-6)}
+                                    {selectedCustomer ? formatCustomerId(selectedCustomer) : ''}
                                   </Badge>
                                   {isFieldEditable && (
                                     <Button
@@ -2095,7 +2495,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                                 {isSelected && <Check className="h-4 w-4 text-[#c53032]" />}
                                               </div>
                                               <span className="text-xs text-gray-500">{vehicle.plateNo}</span>
-                                              <span className="text-xs text-gray-400 mt-0.5">ID: {vehicleId.slice(-6)}</span>
+                                              <span className="text-xs text-gray-400 mt-0.5">ID: {formatVehicleId(vehicle)}</span>
                                             </div>
                                           </CommandItem>
                                         );
@@ -2117,7 +2517,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <Badge variant="outline" className="text-xs">
-                                    {(selectedVehicle?._id || selectedVehicle?.id)?.slice(-6)}
+                                    {selectedVehicle ? formatVehicleId(selectedVehicle) : ''}
                                   </Badge>
                                   {isFieldEditable && (
                                     <Button
@@ -2200,101 +2600,236 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                     {isFieldEditable && (
                       <>
                         <div>
-                          <Label className="text-xs text-slate-500 mb-2">Add from Catalog</Label>
-                          <div className="grid grid-cols-2 gap-2">
-                            {catalogServices.length > 0 ? catalogServices.map((service: any) => {
-                              const isSelected = selectedServices.some(
+                          <Label className="text-xs text-slate-500 mb-2">Add Service</Label>
+                          <Popover open={serviceSearchOpen} onOpenChange={(open: boolean) => {
+                            setServiceSearchOpen(open);
+                            if (!open) {
+                              setServiceSearchQuery("");
+                            }
+                          }}>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                aria-expanded={serviceSearchOpen}
+                                className="w-full justify-between"
+                              >
+                                <span className="text-muted-foreground">Search services...</span>
+                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[400px] p-0" align="start" onOpenAutoFocus={(e: React.FocusEvent<HTMLInputElement>) => e.preventDefault()}>
+                              <Command shouldFilter={false}>
+                                <CommandInput 
+                                  placeholder="Search services..." 
+                                  value={serviceSearchQuery}
+                                  onValueChange={setServiceSearchQuery}
+                                />
+                                <CommandList>
+                                  <CommandEmpty>
+                                    <div className="py-4 text-center text-sm text-gray-500">
+                                      No services found
+                                    </div>
+                                  </CommandEmpty>
+                                  <CommandGroup heading="Services">
+                                    <CommandItem
+                                      value="add-custom-service"
+                                      onSelect={() => {
+                                        setShowCustomService(true);
+                                        setServiceSearchOpen(false);
+                                        setServiceSearchQuery("");
+                                      }}
+                                      className="cursor-pointer"
+                                    >
+                                      <Plus className="mr-2 h-4 w-4" />
+                                      <span className="font-medium">Add Custom Service</span>
+                                    </CommandItem>
+                                    {(catalogServices.length > 0 ? catalogServices : mockServices)
+                                      .filter((service: any) => {
+                                        if (!serviceSearchQuery) return true;
+                                        const query = serviceSearchQuery.toLowerCase();
+                                        const name = (service.name || "").toLowerCase();
+                                        return name.includes(query);
+                                      })
+                                      .filter((service: any) => {
+                                        // Filter out already selected services
+                                        return !selectedServices.some(
                                 (selected) =>
                                   selected.catalogId === (service._id || service.id) ||
                                   selected.id === (service._id || service.id) ||
                                   selected.name === service.name
                               );
-
+                                      })
+                                      .map((service: any) => {
+                                        const serviceId = service._id || service.id;
+                                        // Check if this is a custom service owned by the current user
+                                        // Custom services have visibility: 'local'
+                                        // Since backend only returns local items for current user, all 'local' services can be deleted
+                                        const isCustomService = service.visibility === 'local';
+                                        const canDelete = isCustomService; // All local services belong to current user
                               return (
-                                <button
-                                  key={service._id || service.id}
-                                  type="button"
-                                  onClick={() => handleAddService(service)}
-                                  disabled={isSelected}
-                                  className={`p-3 border rounded-lg transition-all text-left ${
-                                    isSelected
-                                      ? "border-[#c53032] bg-[#fde7e7] shadow-sm cursor-default"
-                                      : "border-slate-200 hover:border-[#f1999b] hover:bg-[#fff5f5]"
-                                  }`}
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div>
-                                      <p className="text-xs font-medium text-slate-900">{service.name}</p>
-                                      <p className="text-xs text-slate-500 mt-1">
-                                        {formatCurrency(getServiceCostValue(service))} • {service.estimatedTime || `${service.durationMinutes || 0} min`}
-                                      </p>
+                                          <CommandItem
+                                            key={serviceId}
+                                            value={`${service.name} ${service.estimatedTime || ''} ${formatCurrency(getServiceCostValue(service))}`}
+                                            onSelect={() => {
+                                              handleAddService(service);
+                                              setServiceSearchOpen(false);
+                                              setServiceSearchQuery("");
+                                            }}
+                                            className="cursor-pointer"
+                                          >
+                                            <div className="flex items-center justify-between w-full group">
+                                              <div className="flex flex-col flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                  <span className="font-medium">{service.name}</span>
+                                                  {isCustomService && (
+                                                    <Badge variant="outline" className="text-xs h-5 px-1.5">
+                                                      Custom
+                                                    </Badge>
+                                                  )}
+                                                </div>
+                                                <span className="text-xs text-gray-500">
+                                          {formatCurrency(getServiceCostValue(service))} • {service.estimatedTime || `${service.durationMinutes || 0} min`}
+                                                </span>
+                                                {/* Show inventory info if service is linked to inventory */}
+                                                {service.inventoryItemId && inventoryItems[service.inventoryItemId] && (() => {
+                                                  const invItem = inventoryItems[service.inventoryItemId];
+                                                  const stock = invItem.currentStock || 0;
+                                                  const minStock = invItem.minStock || 0;
+                                                  const isLowStock = stock <= minStock;
+                                                  const isOutOfStock = stock < 0;
+                                                  const quantityToDeduct = service.consumeQuantityPerUse || 1;
+                                                  
+                                                  return (
+                                                    <div className="mt-1 flex items-center gap-2">
+                                                      <Package className="h-3 w-3 text-slate-400" />
+                                                      <span className={`text-xs ${
+                                                        isOutOfStock ? 'text-red-600 font-semibold' :
+                                                        isLowStock ? 'text-orange-600' :
+                                                        'text-slate-500'
+                                                      }`}>
+                                                        Stock: {stock} {invItem.unit || 'piece'}
+                                                        {quantityToDeduct !== 1 && ` (uses ${quantityToDeduct})`}
+                                                      </span>
+                                                      {isLowStock && (
+                                                        <Badge variant={isOutOfStock ? "destructive" : "outline"} className="text-xs h-4 px-1.5">
+                                                          {isOutOfStock ? 'Out' : 'Low'}
+                                                        </Badge>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })()}
+                                              </div>
+                                              {canDelete && (
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  className="h-6 w-6 opacity-0 group-hover:opacity-100 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                                  onClick={(e) => handleDeleteCustomService(service, e)}
+                                                  title="Delete custom service"
+                                                >
+                                                  <Trash2 className="h-3.5 w-3.5" />
+                                                </Button>
+                                              )}
                                     </div>
-                                    {isSelected && (
-                                      <Check className="h-4 w-4 text-[#c53032]" />
-                                    )}
-                                  </div>
-                                </button>
-                              );
-                            }) : mockServices.map((service) => {
-                              const isSelected = selectedServices.some(
-                                (selected) =>
-                                  selected.catalogId === service.id ||
-                                  selected.id === service.id ||
-                                  selected.name === service.name
-                              );
-
-                              return (
-                                <button
-                                  key={service.id}
-                                  type="button"
-                                  onClick={() => handleAddService(service)}
-                                  disabled={isSelected}
-                                  className={`p-3 border rounded-lg transition-all text-left ${
-                                    isSelected
-                                      ? "border-[#c53032] bg-[#fde7e7] shadow-sm cursor-default"
-                                      : "border-slate-200 hover:border-[#f1999b] hover:bg-[#fff5f5]"
-                                  }`}
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div>
-                                      <p className="text-xs font-medium text-slate-900">{service.name}</p>
-                                      <p className="text-xs text-slate-500 mt-1">
-                                        {formatCurrency(getServiceCostValue(service))} • {service.estimatedTime}
-                                      </p>
-                                    </div>
-                                    {isSelected && (
-                                      <Check className="h-4 w-4 text-[#c53032]" />
-                                    )}
-                                  </div>
-                                </button>
+                                          </CommandItem>
                               );
                             })}
-                          </div>
-                          {selectedServices.length > 0 && isFieldEditable && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setShowServiceCommentDialog(true)}
-                              className="w-full mt-3"
-                            >
-                              Done
-                            </Button>
-                          )}
+                                  </CommandGroup>
+                                  {/* Inventory Items Section */}
+                                  {Object.keys(inventoryItems).length > 0 && (
+                                    <CommandGroup heading="Inventory Items">
+                                      {Object.values(inventoryItems)
+                                        .filter((item: any) => item.isActive)
+                                        .filter((item: any) => {
+                                          if (!serviceSearchQuery) return true;
+                                          const query = serviceSearchQuery.toLowerCase();
+                                          const name = (item.name || "").toLowerCase();
+                                          const sku = (item.sku || "").toLowerCase();
+                                          const category = (item.category || "").toLowerCase();
+                                          return name.includes(query) || sku.includes(query) || category.includes(query);
+                                        })
+                                        .filter((item: any) => {
+                                          // Filter out already selected inventory items
+                                          return !selectedServices.some(
+                                            (selected) =>
+                                              selected.inventoryItemId === item._id ||
+                                              (selected.name === item.name && selected.isInventoryItem)
+                                          );
+                                        })
+                                        .map((item: any) => {
+                                          const stock = item.currentStock || 0;
+                                          const minStock = item.minStock || 0;
+                                          const isLowStock = stock <= minStock;
+                                          const isOutOfStock = stock < 0;
+                                          
+                                          return (
+                                            <CommandItem
+                                              key={item._id}
+                                              value={`${item.name} ${item.sku || ''} ${item.category || ''}`}
+                                              onSelect={() => {
+                                                handleAddInventoryItem(item);
+                                                setServiceSearchOpen(false);
+                                                setServiceSearchQuery("");
+                                              }}
+                                              className="cursor-pointer"
+                                            >
+                                              <div className="flex items-center justify-between w-full group">
+                                                <div className="flex flex-col flex-1 min-w-0">
+                                                  <div className="flex items-center gap-2">
+                                                    <Package className="h-3.5 w-3.5 text-blue-500" />
+                                                    <span className="font-medium">{item.name}</span>
+                                                    <Badge variant="outline" className="text-xs h-5 px-1.5 bg-blue-50 text-blue-700 border-blue-200">
+                                                      Inventory
+                                                    </Badge>
+                                                    {item.sku && (
+                                                      <Badge variant="outline" className="text-xs h-5 px-1.5">
+                                                        {item.sku}
+                                                      </Badge>
+                                                    )}
+                                                  </div>
+                                                  <div className="flex items-center gap-2 mt-1">
+                                                    <span className="text-xs text-gray-500">
+                                                      {item.category && `${item.category} • `}
+                                                      {formatCurrency(item.salePrice || 0)} • Stock: {stock} {item.unit || 'piece'}
+                                                    </span>
+                                                    {isLowStock && (
+                                                      <Badge variant={isOutOfStock ? "destructive" : "outline"} className="text-xs h-4 px-1.5">
+                                                        {isOutOfStock ? 'Out' : 'Low'}
+                                                      </Badge>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            </CommandItem>
+                                          );
+                                        })}
+                                    </CommandGroup>
+                                  )}
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
 
-                        {/* Custom Service */}
-                        {!showCustomService ? (
+                        {/* Custom Service Dialog */}
+                        {showCustomService && (
+                          <div className="p-3 border border-slate-200 rounded-lg space-y-2 mt-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs font-medium">Add Custom Service</Label>
                           <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setShowCustomService(true)}
-                            className="w-full border-dashed"
-                          >
-                            + Add Custom Service
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => {
+                                  setShowCustomService(false);
+                                  setCustomService({ name: "", cost: "", time: "", subServices: [], serviceDetails: [] });
+                                }}
+                              >
+                                <X className="h-4 w-4" />
                           </Button>
-                        ) : (
-                          <div className="p-3 border border-slate-200 rounded-lg space-y-2">
+                            </div>
                             <Input
                               placeholder="Service name"
                               value={customService.name}
@@ -2308,16 +2843,211 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                 onChange={(e) => setCustomService({ ...customService, cost: e.target.value })}
                               />
                               <Input
-                                placeholder="Time"
+                                placeholder="Time (e.g., 30 min)"
                                 value={customService.time}
                                 onChange={(e) => setCustomService({ ...customService, time: e.target.value })}
                               />
                             </div>
-                            <div className="flex gap-2">
+                            
+                            {/* Service Details/Options Section */}
+                            <div className="space-y-2 pt-2 border-t border-slate-200">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-xs font-medium text-slate-600">Service Details (e.g., Oil Type, Filter Type)</Label>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => {
+                                    const newDetail = {
+                                      id: `detail-${Date.now()}`,
+                                      key: `detail_${Date.now()}`,
+                                      label: "",
+                                      type: 'text' as 'text' | 'select' | 'multiselect',
+                                      options: [] as string[]
+                                    };
+                                    setCustomService({
+                                      ...customService,
+                                      serviceDetails: [...(customService.serviceDetails || []), newDetail]
+                                    });
+                                  }}
+                                >
+                                  <Plus className="h-3 w-3 mr-1" />
+                                  Add Detail
+                                </Button>
+                              </div>
+                              
+                              {customService.serviceDetails && customService.serviceDetails.length > 0 && (
+                                <div className="space-y-2">
+                                  {customService.serviceDetails.map((detail, index) => (
+                                    <div key={detail.id} className="p-2 bg-slate-50 rounded-md space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <Label className="text-xs text-slate-500">Detail {index + 1}</Label>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-5 w-5"
+                                          onClick={() => {
+                                            setCustomService({
+                                              ...customService,
+                                              serviceDetails: customService.serviceDetails.filter(d => d.id !== detail.id)
+                                            });
+                                          }}
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                      <Input
+                                        placeholder="Detail name (e.g., Oil Type, Filter Type)"
+                                        value={detail.label}
+                                        onChange={(e) => {
+                                          const updated = customService.serviceDetails.map(d =>
+                                            d.id === detail.id 
+                                              ? { ...d, label: e.target.value, key: `detail_${e.target.value.toLowerCase().replace(/\s+/g, '_')}` } 
+                                              : d
+                                          );
+                                          setCustomService({ ...customService, serviceDetails: updated });
+                                        }}
+                                        className="h-8 text-xs"
+                                      />
+                                      <Select
+                                        value={detail.type}
+                                        onValueChange={(value: 'text' | 'select' | 'multiselect') => {
+                                          const updated = customService.serviceDetails.map(d =>
+                                            d.id === detail.id 
+                                              ? { ...d, type: value, options: value === 'text' ? [] : d.options } 
+                                              : d
+                                          );
+                                          setCustomService({ ...customService, serviceDetails: updated });
+                                        }}
+                                      >
+                                        <SelectTrigger className="h-8 text-xs">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="text">Text Input</SelectItem>
+                                          <SelectItem value="select">Dropdown (Select One)</SelectItem>
+                                          <SelectItem value="multiselect">Multi-Select</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                      {(detail.type === 'select' || detail.type === 'multiselect') && (
+                                        <Textarea
+                                          placeholder="Options (one per line)&#10;e.g., 5W-30&#10;10W-40&#10;20W-50"
+                                          value={detail.options.join('\n')}
+                                          onChange={(e) => {
+                                            const updated = customService.serviceDetails.map(d =>
+                                              d.id === detail.id 
+                                                ? { ...d, options: e.target.value.split('\n').filter(o => o.trim() !== '') } 
+                                                : d
+                                            );
+                                            setCustomService({ ...customService, serviceDetails: updated });
+                                          }}
+                                          className="h-20 text-xs resize-none"
+                                        />
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            
+                            {/* Sub-Services Section */}
+                            <div className="space-y-2 pt-2 border-t border-slate-200">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-xs font-medium text-slate-600">Sub-Services (Optional)</Label>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => {
+                                    const newSubService = {
+                                      id: `sub-${Date.now()}`,
+                                      name: "",
+                                      details: "",
+                                      cost: ""
+                                    };
+                                    setCustomService({
+                                      ...customService,
+                                      subServices: [...(customService.subServices || []), newSubService]
+                                    });
+                                  }}
+                                >
+                                  <Plus className="h-3 w-3 mr-1" />
+                                  Add Sub-Service
+                                </Button>
+                              </div>
+                              
+                              {customService.subServices && customService.subServices.length > 0 && (
+                                <div className="space-y-2">
+                                  {customService.subServices.map((subService, index) => (
+                                    <div key={subService.id} className="p-2 bg-slate-50 rounded-md space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <Label className="text-xs text-slate-500">Sub-Service {index + 1}</Label>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-5 w-5"
+                                          onClick={() => {
+                                            setCustomService({
+                                              ...customService,
+                                              subServices: customService.subServices.filter(s => s.id !== subService.id)
+                                            });
+                                          }}
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                      <Input
+                                        placeholder="Sub-service name"
+                                        value={subService.name}
+                                        onChange={(e) => {
+                                          const updated = customService.subServices.map(s =>
+                                            s.id === subService.id ? { ...s, name: e.target.value } : s
+                                          );
+                                          setCustomService({ ...customService, subServices: updated });
+                                        }}
+                                        className="h-8 text-xs"
+                                      />
+                                      <Textarea
+                                        placeholder="Details/Description"
+                                        value={subService.details}
+                                        onChange={(e) => {
+                                          const updated = customService.subServices.map(s =>
+                                            s.id === subService.id ? { ...s, details: e.target.value } : s
+                                          );
+                                          setCustomService({ ...customService, subServices: updated });
+                                        }}
+                                        className="h-16 text-xs resize-none"
+                                      />
+                                      <Input
+                                        type="number"
+                                        placeholder="Cost (Rs) - Optional"
+                                        value={subService.cost || ""}
+                                        onChange={(e) => {
+                                          const updated = customService.subServices.map(s =>
+                                            s.id === subService.id ? { ...s, cost: e.target.value } : s
+                                          );
+                                          setCustomService({ ...customService, subServices: updated });
+                                        }}
+                                        className="h-8 text-xs"
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            
+                            <div className="flex gap-2 pt-2">
                               <Button size="sm" onClick={handleAddCustomService} className="flex-1">
-                                Add
+                                Add to Catalog
                               </Button>
-                              <Button size="sm" variant="outline" onClick={() => setShowCustomService(false)} className="flex-1">
+                              <Button size="sm" variant="outline" onClick={() => {
+                                setShowCustomService(false);
+                                setCustomService({ name: "", cost: "", time: "", subServices: [], serviceDetails: [] });
+                              }} className="flex-1">
                                 Cancel
                               </Button>
                             </div>
@@ -2375,9 +3105,86 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                       <div className="flex-1">
                                         <div className="flex items-center gap-2 mb-1">
                                           <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                          {service.isInventoryItem && (
+                                            <Package className="h-4 w-4 text-blue-500" />
+                                          )}
+                                          <div className="flex-1">
+                                            <div className="flex items-center gap-2">
                                           <p className="text-sm font-medium text-slate-900">
                                             {service.name}
                                           </p>
+                                              {service.isInventoryItem && (
+                                                <Badge variant="outline" className="text-xs h-5 px-1.5 bg-blue-50 text-blue-700 border-blue-200">
+                                                  Inventory
+                                                </Badge>
+                                              )}
+                                              {service.sku && (
+                                                <Badge variant="outline" className="text-xs h-5 px-1.5">
+                                                  {service.sku}
+                                                </Badge>
+                                              )}
+                                            </div>
+                                            {/* Show inventory info for inventory items */}
+                                            {service.isInventoryItem && service.inventoryItem && (() => {
+                                              const invItem = service.inventoryItem;
+                                              const stock = invItem.currentStock || 0;
+                                              const minStock = invItem.minStock || 0;
+                                              const isLowStock = stock <= minStock;
+                                              const isOutOfStock = stock < 0;
+                                              
+                                              return (
+                                                <div className="mt-1 flex items-center gap-2">
+                                                  <span className={`text-xs ${
+                                                    isOutOfStock ? 'text-red-600 font-semibold' :
+                                                    isLowStock ? 'text-orange-600' :
+                                                    'text-slate-500'
+                                                  }`}>
+                                                    {invItem.category && `${invItem.category} • `}
+                                                    Stock: {stock} {invItem.unit || 'piece'}
+                                                  </span>
+                                                  {isLowStock && (
+                                                    <Badge variant={isOutOfStock ? "destructive" : "outline"} className="text-xs h-4 px-1.5">
+                                                      {isOutOfStock ? 'Out' : 'Low'}
+                                                    </Badge>
+                                                  )}
+                                                </div>
+                                              );
+                                            })()}
+                                            {/* Show inventory info if service is linked to inventory */}
+                                            {!service.isInventoryItem && (() => {
+                                              const catalogItem = catalogServices.find(
+                                                (item: any) => (item._id || item.id) === (service.serviceId || service.catalogId)
+                                              );
+                                              if (catalogItem?.inventoryItemId && inventoryItems[catalogItem.inventoryItemId]) {
+                                                const invItem = inventoryItems[catalogItem.inventoryItemId];
+                                                const stock = invItem.currentStock || 0;
+                                                const minStock = invItem.minStock || 0;
+                                                const isLowStock = stock <= minStock;
+                                                const isOutOfStock = stock < 0;
+                                                const quantityToDeduct = catalogItem.consumeQuantityPerUse || 1;
+                                                
+                                                return (
+                                                  <div className="mt-1 flex items-center gap-2">
+                                                    <Package className="h-3 w-3 text-slate-400" />
+                                                    <span className={`text-xs ${
+                                                      isOutOfStock ? 'text-red-600 font-semibold' :
+                                                      isLowStock ? 'text-orange-600' :
+                                                      'text-slate-500'
+                                                    }`}>
+                                                      Stock: {stock} {invItem.unit || 'piece'}
+                                                      {quantityToDeduct !== 1 && ` (uses ${quantityToDeduct})`}
+                                                    </span>
+                                                    {isLowStock && (
+                                                      <Badge variant={isOutOfStock ? "destructive" : "outline"} className="text-xs h-4 px-1.5">
+                                                        {isOutOfStock ? 'Out' : 'Low'}
+                                                      </Badge>
+                                                    )}
+                                                  </div>
+                                                );
+                                              }
+                                              return null;
+                                            })()}
+                                          </div>
                                         </div>
                                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 ml-6">
                                           <span>{formatCurrency(getServiceCostValue(service))}</span>
@@ -2477,14 +3284,31 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                           </div>
                         ) : (
                           // View/Edit mode for pending/in-progress jobs
-                          selectedServices.map((service) => (
+                          selectedServices.map((service) => {
+                            // Check if service should be clickable
+                            const catalogItem = catalogServices.find(
+                              (item: any) => (item._id || item.id) === (service.serviceId || service.catalogId)
+                            );
+                            const hasSubOptions = catalogItem?.subOptions && catalogItem.subOptions.length > 0;
+                            const allowsComments = catalogItem?.allowComments;
+                            const hasAllowedParts = catalogItem?.allowedParts && catalogItem.allowedParts.length > 0;
+                            const isClickable = isFieldEditable && userRole !== "Technician" && (hasSubOptions || allowsComments || hasAllowedParts || service.name === "Oil Change");
+                            
+                            return (
                             <div
                               key={service.id}
                               className={`group p-3 border rounded-lg transition-all ${
                                 !isNewJobCard && service.completed
                                   ? "border-green-200 bg-green-50"
                                   : "border-slate-200 bg-white hover:border-slate-300"
-                              }`}
+                              } ${isClickable ? "cursor-pointer hover:shadow-sm" : ""}`}
+                              onClick={isClickable ? () => {
+                                if (service.name === "Oil Change" && !catalogItem?.subOptions && !catalogItem?.allowComments && !catalogItem?.allowedParts) {
+                                  openOilChangeDetailsDialog("edit", service, service.id);
+                                } else {
+                                  openServiceDetailsDialog("edit", service, catalogItem || service, service.id);
+                                }
+                              } : undefined}
                             >
                               <div className="flex items-start gap-3">
                                 {!isNewJobCard && (
@@ -2500,31 +3324,122 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                     {!isNewJobCard && service.completed && (
                                       <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
                                     )}
+                                    {service.isInventoryItem && (
+                                      <Package className="h-4 w-4 text-blue-500 shrink-0" />
+                                    )}
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
                                     <p className={`text-sm font-medium ${!isNewJobCard && service.completed ? "text-slate-500 line-through" : "text-slate-900"}`}>
                                       {service.name}
                                     </p>
-                                    {(service.name === "Oil Change" || service.subOptionValues || service.comments || service.partsUsed) && isFieldEditable && userRole !== "Technician" && (
+                                        {service.isInventoryItem && (
+                                          <Badge variant="outline" className="text-xs h-5 px-1.5 bg-blue-50 text-blue-700 border-blue-200">
+                                            Inventory
+                                          </Badge>
+                                        )}
+                                        {service.sku && (
+                                          <Badge variant="outline" className="text-xs h-5 px-1.5">
+                                            {service.sku}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      {/* Show inventory info for inventory items or services linked to inventory */}
+                                      {service.isInventoryItem && service.inventoryItem && (() => {
+                                        const invItem = service.inventoryItem;
+                                        const stock = invItem.currentStock || 0;
+                                        const minStock = invItem.minStock || 0;
+                                        const isLowStock = stock <= minStock;
+                                        const isOutOfStock = stock < 0;
+                                        
+                                        return (
+                                          <div className="mt-1 flex items-center gap-2">
+                                            <span className={`text-xs ${
+                                              isOutOfStock ? 'text-red-600 font-semibold' :
+                                              isLowStock ? 'text-orange-600' :
+                                              'text-slate-500'
+                                            }`}>
+                                              {invItem.category && `${invItem.category} • `}
+                                              Stock: {stock} {invItem.unit || 'piece'}
+                                            </span>
+                                            {isLowStock && (
+                                              <Badge variant={isOutOfStock ? "destructive" : "outline"} className="text-xs h-4 px-1.5">
+                                                {isOutOfStock ? 'Out' : 'Low'}
+                                              </Badge>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+                                      {/* Show inventory info if service is linked to inventory */}
+                                      {!service.isInventoryItem && (() => {
+                                        const catalogItem = catalogServices.find(
+                                          (item: any) => (item._id || item.id) === (service.serviceId || service.catalogId)
+                                        );
+                                        if (catalogItem?.inventoryItemId && inventoryItems[catalogItem.inventoryItemId]) {
+                                          const invItem = inventoryItems[catalogItem.inventoryItemId];
+                                          const stock = invItem.currentStock || 0;
+                                          const minStock = invItem.minStock || 0;
+                                          const isLowStock = stock <= minStock;
+                                          const isOutOfStock = stock < 0;
+                                          const quantityToDeduct = catalogItem.consumeQuantityPerUse || 1;
+                                          
+                                          return (
+                                            <div className="mt-1 flex items-center gap-2">
+                                              <Package className="h-3 w-3 text-slate-400" />
+                                              <span className={`text-xs ${
+                                                isOutOfStock ? 'text-red-600 font-semibold' :
+                                                isLowStock ? 'text-orange-600' :
+                                                'text-slate-500'
+                                              }`}>
+                                                Stock: {stock} {invItem.unit || 'piece'}
+                                                {quantityToDeduct !== 1 && ` (uses ${quantityToDeduct})`}
+                                              </span>
+                                              {isLowStock && (
+                                                <Badge variant={isOutOfStock ? "destructive" : "outline"} className="text-xs h-4 px-1.5">
+                                                  {isOutOfStock ? 'Out' : 'Low'}
+                                                </Badge>
+                                              )}
+                                            </div>
+                                          );
+                                        }
+                                        return null;
+                                      })()}
+                                    </div>
+                                    {/* Make service clickable if it has sub-options, allows comments, or has parts - show edit button or make entire service clickable */}
+                                    {(() => {
+                                      const catalogItem = catalogServices.find(
+                                        (item: any) => (item._id || item.id) === (service.serviceId || service.catalogId)
+                                      );
+                                      const hasSubOptions = catalogItem?.subOptions && catalogItem.subOptions.length > 0;
+                                      const allowsComments = catalogItem?.allowComments;
+                                      const hasAllowedParts = catalogItem?.allowedParts && catalogItem.allowedParts.length > 0;
+                                      const hasExistingData = service.subOptionValues || service.comments || service.partsUsed || hasOilChangeDetails(service);
+                                      
+                                      // Show edit button if service has configurable options or existing data
+                                      if ((hasSubOptions || allowsComments || hasAllowedParts || hasExistingData) && isFieldEditable && userRole !== "Technician") {
+                                        return (
                                       <Button
                                         type="button"
                                         variant="ghost"
                                         size="icon"
                                         className="h-6 w-6 text-slate-500 hover:text-slate-700"
                                         onClick={() => {
-                                          const catalogItem = catalogServices.find(
-                                            (item: any) => (item._id || item.id) === (service.serviceId || service.catalogId)
-                                          );
                                           if (service.name === "Oil Change" && !catalogItem?.subOptions && !catalogItem?.allowComments && !catalogItem?.allowedParts) {
                                             openOilChangeDetailsDialog("edit", service, service.id);
                                           } else {
                                             openServiceDetailsDialog("edit", service, catalogItem || service, service.id);
                                           }
                                         }}
+                                            title="Click to configure service details"
                                       >
                                         <Edit2 className="h-3.5 w-3.5" />
                                       </Button>
-                                    )}
+                                        );
+                                      }
+                                      return null;
+                                    })()}
                                   </div>
-                                  {editingServiceId === service.id ? (
+                                  {/* Edit Price */}
+                                  {editingServiceId === service.id && editingServiceCost !== "" ? (
                                     <div className="flex flex-wrap items-center gap-2 mt-2">
                                       <Input
                                         value={editingServiceCost}
@@ -2542,6 +3457,21 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                         Cancel
                                       </Button>
                                     </div>
+                                  ) : editingServiceId === service.id && editingServiceTime !== "" ? (
+                                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                                      <Input
+                                        value={editingServiceTime}
+                                        onChange={(e) => setEditingServiceTime(e.target.value)}
+                                        placeholder="Enter time (e.g., 30 min)"
+                                        className="h-8 w-32"
+                                      />
+                                      <Button size="sm" onClick={saveEditingServiceTime}>
+                                        Save
+                                      </Button>
+                                      <Button size="sm" variant="ghost" onClick={cancelEditingServiceTime}>
+                                        Cancel
+                                      </Button>
+                                    </div>
                                   ) : (
                                     <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500">
                                       <span>{formatCurrency(getServiceCostValue(service))}</span>
@@ -2552,24 +3482,60 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                         </>
                                       )}
                                       {isFieldEditable && userRole !== "Technician" && (
+                                        <>
                                         <Button
                                           variant="ghost"
                                           size="icon"
                                           className="h-6 w-6 text-slate-500 hover:text-slate-700"
                                           onClick={() => startEditingServiceCost(service.id, getServiceCostValue(service))}
+                                            title="Edit price"
                                         >
                                           <Edit2 className="h-3.5 w-3.5" />
                                         </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-6 w-6 text-slate-500 hover:text-slate-700"
+                                            onClick={() => startEditingServiceTime(service.id, service.estimatedTime || "")}
+                                            title="Edit time"
+                                          >
+                                            <Clock className="h-3.5 w-3.5" />
+                                          </Button>
+                                        </>
                                       )}
                                     </div>
                                   )}
-                                  {/* Show Oil Change details if available */}
+                                  {/* Show service details (sub-options, comments, parts) - values are job-specific, not permanent */}
                                   {(() => {
                                     const { details: oilDetails, hasDetails } = extractOilDetails(service);
-                                    if (!hasDetails) return null;
+                                    const hasSubOptions = service.subOptionValues && Object.keys(service.subOptionValues).length > 0;
+                                    const hasComments = service.comments && service.comments.trim() !== '';
+                                    const hasParts = service.partsUsed && service.partsUsed.length > 0;
+                                    
+                                    // Check if service has required details from catalog (even if not filled yet)
+                                    const catalogItem = catalogServices.find(
+                                      (item: any) => (item._id || item.id) === (service.serviceId || service.catalogId)
+                                    );
+                                    const hasRequiredDetails = catalogItem?.subOptions && catalogItem.subOptions.length > 0;
+                                    
+                                    if (!hasDetails && !hasSubOptions && !hasComments && !hasParts) {
+                                      // Show placeholder if service requires details but none filled yet
+                                      if (hasRequiredDetails) {
+                                        return (
+                                          <div className="mt-2 ml-6 p-2 bg-amber-50 rounded border border-amber-200">
+                                            <p className="text-xs text-amber-600 font-medium">
+                                              ⚠ Service details required - Click edit button to fill in
+                                            </p>
+                                          </div>
+                                        );
+                                      }
+                                      return null;
+                                    }
+                                    
                                     return (
                                       <div className="mt-2 ml-6 p-2 bg-slate-50 rounded border border-slate-200">
                                         <p className="text-xs text-slate-500 mb-1 font-medium">Service Details:</p>
+                                        {/* Oil Change details (legacy) */}
                                         {oilDetails.oilFilter && (
                                           <p className="text-xs text-slate-600">Filter: {oilDetails.oilFilter}</p>
                                         )}
@@ -2581,6 +3547,30 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                         )}
                                         {oilDetails.customNote && (
                                           <p className="text-xs text-slate-600">{oilDetails.customNote}</p>
+                                        )}
+                                        {/* Sub-options - Service details (e.g., Oil Type, Filter Type) - values are specific to this job */}
+                                        {hasSubOptions && Object.entries(service.subOptionValues || {}).map(([key, value]: [string, any]) => {
+                                          // Find the label from catalog if available
+                                          const subOption = catalogItem?.subOptions?.find((opt: any) => opt.key === key);
+                                          const label = subOption?.label || key;
+                                          const displayValue = Array.isArray(value) ? value.join(', ') : String(value || '');
+                                          return (
+                                            <p key={key} className="text-xs text-slate-600">
+                                              <span className="font-medium">{label}:</span> {displayValue}
+                                            </p>
+                                          );
+                                        })}
+                                        {/* Comments */}
+                                        {hasComments && (
+                                          <p className="text-xs text-slate-600 mt-1">
+                                            <span className="font-medium">Comments:</span> {service.comments}
+                                          </p>
+                                        )}
+                                        {/* Parts Used */}
+                                        {hasParts && (
+                                          <p className="text-xs text-slate-600 mt-1">
+                                            <span className="font-medium">Parts Used:</span> {service.partsUsed.join(', ')}
+                                          </p>
                                         )}
                                       </div>
                                     );
@@ -2596,7 +3586,8 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
                                 )}
                               </div>
                             </div>
-                          ))
+                          );
+                          })
                         )}
                       </div>
                     )}
@@ -2755,7 +3746,8 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
             </Collapsible>
 
             {/* Job Photos Section - only relevant after job creation */}
-            {!isNewJobCard && (
+            {/* Only show if there are photos uploaded OR if user can edit (to allow uploading) */}
+            {!isNewJobCard && (uploadedFiles.length > 0 || isFieldEditable) && (
               <Collapsible open={sectionsOpen.photos} onOpenChange={() => toggleSection("photos")}>
                 <Card className="border-slate-200 shadow-sm">
                   <CollapsibleTrigger asChild>
@@ -3512,24 +4504,36 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
           <div className="space-y-4">
             <div className="space-y-2">
               <Label className="text-xs text-slate-500">Assign to Customer *</Label>
-              <Select
-                value={newVehicleForm.customerId}
-                onValueChange={(value: string) => updateNewVehicleForm("customerId", value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select customer..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map((customer) => {
-                    const customerId = customer._id || customer.id;
-                    return (
-                      <SelectItem key={customerId} value={customerId}>
-                      {customer.name}
-                    </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
+              {selectedCustomerId && newVehicleForm.customerId === selectedCustomerId ? (
+                // If customer is already selected in job card, show it as read-only
+                <div className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-md">
+                  <User className="h-4 w-4 text-slate-500" />
+                  <span className="text-sm font-medium text-slate-700">
+                    {customers.find(c => (c._id || c.id) === selectedCustomerId)?.name || 'Selected Customer'}
+                  </span>
+                  <span className="text-xs text-slate-500 ml-auto">(Auto-linked)</span>
+                </div>
+              ) : (
+                // Allow customer selection if no customer is selected in job card
+                <Select
+                  value={newVehicleForm.customerId}
+                  onValueChange={(value: string) => updateNewVehicleForm("customerId", value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select customer..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customers.map((customer) => {
+                      const customerId = customer._id || customer.id;
+                      return (
+                        <SelectItem key={customerId} value={customerId}>
+                        {customer.name}
+                      </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              )}
               {newVehicleErrors.customerId && (
                 <p className="text-xs text-red-600">{newVehicleErrors.customerId}</p>
               )}
@@ -3846,14 +4850,18 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
           open={showInvoicePreview}
           onOpenChange={setShowInvoicePreview}
           invoiceData={{
-            invoiceNumber: jobId
-              ? `INV-${jobId.toString().padStart(3, "0")}`
-              : `INV-${Date.now().toString().slice(-6)}`,
-            issueDate: new Date().toLocaleDateString("en-US", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-            }),
+            invoiceNumber: (() => {
+              const plateNo = selectedVehicle?.plateNo || selectedVehicle?.plate || '';
+              const customerName = selectedCustomer?.name || '';
+              if (plateNo && customerName) {
+                const initials = customerName.split(' ').map((n: string) => n[0]?.toUpperCase() || '').join('').slice(0, 2);
+                if (initials) {
+                  return `${plateNo}-${initials}`;
+                }
+              }
+              return jobId ? `INV-${jobId.toString().padStart(3, "0")}` : formatInvoiceId({ _id: Date.now().toString() });
+            })(),
+            issueDate: new Date().toISOString(),
             jobId: jobId || undefined,
             customer: {
               name: selectedCustomer.name,
@@ -3874,10 +4882,7 @@ export function JobCardDetail({ jobCard, onClose, onSave, onDelete, userRole = "
             technician: selectedTechnician ? { name: selectedTechnician.name } : undefined,
             totalCost: totalCost,
           }}
-          onShare={(method) => {
-            // Share functionality can be implemented here
-            console.log("Share via", method);
-          }}
+          businessProfile={businessProfile}
         />
       )}
     </>

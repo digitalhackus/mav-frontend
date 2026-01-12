@@ -34,6 +34,8 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { notificationsAPI, customersAPI, vehiclesAPI } from "../api/client";
+import { toast } from "sonner";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 
 export function Notifications() {
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,7 @@ export function Notifications() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [sendingNotification, setSendingNotification] = useState<string | null>(null);
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   
   // Custom notification dialog state
   const [isCustomDialogOpen, setIsCustomDialogOpen] = useState(false);
@@ -49,7 +52,7 @@ export function Notifications() {
     vehicleId: "",
     title: "",
     message: "",
-    method: "both" as 'email' | 'whatsapp' | 'both'
+    method: "email" as 'email'
   });
   const [customers, setCustomers] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<any[]>([]);
@@ -130,7 +133,7 @@ export function Notifications() {
 
   const handleSendCustomNotification = async () => {
     if (!customNotification.customerId || !customNotification.title || !customNotification.message) {
-      alert("Please fill in all required fields");
+      toast.error("Please fill in all required fields");
       return;
     }
 
@@ -145,7 +148,7 @@ export function Notifications() {
       );
 
       if (response.success) {
-        alert("Custom notification sent successfully!");
+        toast.success("Custom notification sent successfully!");
         setIsCustomDialogOpen(false);
         setCustomNotification({
           customerId: "",
@@ -157,10 +160,10 @@ export function Notifications() {
         setVehicles([]);
         fetchNotifications();
       } else {
-        alert(response.message || "Failed to send custom notification");
+        toast.error(response.message || "Failed to send custom notification");
       }
     } catch (err: any) {
-      alert(err.message || "Failed to send custom notification");
+      toast.error(err.message || "Failed to send custom notification");
     } finally {
       setSendingCustom(false);
     }
@@ -209,7 +212,7 @@ export function Notifications() {
 
   const handleSendEmail = async (notification: any) => {
     if (!notification.customerId || !notification.vehicleId) {
-      alert('Missing customer or vehicle information');
+      toast.error('Missing customer or vehicle information');
       return;
     }
 
@@ -222,13 +225,14 @@ export function Notifications() {
       );
       
       if (response.success) {
+        toast.success('Email sent successfully!');
         // Refresh notifications
         await fetchNotifications();
       } else {
-        alert(response.message || 'Failed to send email');
+        toast.error(response.message || 'Failed to send email');
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to send email');
+      toast.error(err.message || 'Failed to send email');
     } finally {
       setSendingNotification(null);
     }
@@ -236,7 +240,7 @@ export function Notifications() {
 
   const handleSendWhatsApp = async (notification: any) => {
     if (!notification.customerId || !notification.vehicleId) {
-      alert('Missing customer or vehicle information');
+      toast.error('Missing customer or vehicle information');
       return;
     }
 
@@ -249,20 +253,28 @@ export function Notifications() {
       );
       
       if (response.success) {
+        toast.success('WhatsApp message sent successfully!');
         // Refresh notifications
         await fetchNotifications();
       } else {
-        alert(response.message || 'Failed to send WhatsApp message');
+        toast.error(response.message || 'Failed to send WhatsApp message');
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to send WhatsApp message');
+      toast.error(err.message || 'Failed to send WhatsApp message');
     } finally {
       setSendingNotification(null);
     }
   };
 
   const handleBulkSend = async (type: 'all' | 'overdue' | 'due_soon', method: 'email' | 'whatsapp' | 'both') => {
-    if (!confirm(`Are you sure you want to send ${method} notifications to ${type === 'all' ? 'all' : type === 'overdue' ? 'overdue' : 'due soon'} customers?`)) {
+    const confirmed = await confirm({
+      title: "Confirm Bulk Send",
+      description: `Are you sure you want to send ${method} notifications to ${type === 'all' ? 'all' : type === 'overdue' ? 'overdue' : 'due soon'} customers?`,
+      confirmText: "Send",
+      cancelText: "Cancel",
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -270,13 +282,13 @@ export function Notifications() {
     try {
       const response = await notificationsAPI.sendBulk(type, method);
       if (response.success) {
-        alert(response.message);
+        toast.success(response.message || 'Bulk notifications sent successfully!');
         await fetchNotifications();
       } else {
-        alert(response.message || 'Failed to send bulk notifications');
+        toast.error(response.message || 'Failed to send bulk notifications');
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to send bulk notifications');
+      toast.error(err.message || 'Failed to send bulk notifications');
     } finally {
       setLoading(false);
     }
@@ -335,7 +347,7 @@ export function Notifications() {
               <DialogHeader>
                 <DialogTitle>Send Custom Notification</DialogTitle>
                 <DialogDescription>
-                  Send a custom notification to any customer via email, WhatsApp, or both.
+                  Send a custom notification to any customer via email.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 mt-4">
@@ -402,7 +414,7 @@ export function Notifications() {
                             );
                           })
                         ) : (
-                          <SelectItem value="" disabled>No customers found</SelectItem>
+                          <SelectItem value="_no_customers" disabled>No customers found</SelectItem>
                         )}
                       </SelectContent>
                     </Select>
@@ -420,12 +432,12 @@ export function Notifications() {
                     ) : (
                       <div>
                         <Select
-                          value={customNotification.vehicleId || ""}
+                          value={customNotification.vehicleId || "_no_vehicle"}
                           onValueChange={(value) => {
                             try {
                               setCustomNotification(prev => ({ 
                                 ...prev, 
-                                vehicleId: value || "" 
+                                vehicleId: value === "_no_vehicle" ? "" : (value || "")
                               }));
                             } catch (err: any) {
                               console.error("Error selecting vehicle:", err);
@@ -436,7 +448,7 @@ export function Notifications() {
                             <SelectValue placeholder="Select a vehicle (optional)" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">No vehicle</SelectItem>
+                            <SelectItem value="_no_vehicle">No vehicle</SelectItem>
                             {Array.isArray(vehicles) && vehicles.length > 0 ? (
                               vehicles
                                 .filter((vehicle) => vehicle && (vehicle._id || vehicle.id))
@@ -451,7 +463,7 @@ export function Notifications() {
                                   );
                                 })
                             ) : (
-                              <SelectItem value="" disabled>No vehicles found for this customer</SelectItem>
+                              <SelectItem value="_no_vehicles" disabled>No vehicles found for this customer</SelectItem>
                             )}
                           </SelectContent>
                         </Select>
@@ -488,15 +500,13 @@ export function Notifications() {
                   <Label htmlFor="method">Delivery Method *</Label>
                   <Select
                     value={customNotification.method}
-                    onValueChange={(value: 'email' | 'whatsapp' | 'both') => setCustomNotification(prev => ({ ...prev, method: value }))}
+                    onValueChange={(value: 'email') => setCustomNotification(prev => ({ ...prev, method: value }))}
                   >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="email">Email Only</SelectItem>
-                      <SelectItem value="whatsapp">WhatsApp Only</SelectItem>
-                      <SelectItem value="both">Both Email & WhatsApp</SelectItem>
+                      <SelectItem value="email">Email</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -530,41 +540,8 @@ export function Notifications() {
               </div>
             </DialogContent>
           </Dialog>
-          
-          <Button 
-            className="bg-[#c53032] hover:bg-[#a6212a] flex-1 lg:flex-none" 
-            size="sm"
-            onClick={() => handleBulkSend('overdue', 'both')}
-            disabled={loading}
-          >
-            <Send className="h-4 w-4 mr-2" />
-            <span className="hidden sm:inline">Send Bulk Reminders</span>
-            <span className="sm:hidden">Send</span>
-          </Button>
         </div>
       </div>
-
-      {/* Important Note */}
-      <Card className="border-l-4 border-[#c53032] bg-[#fde7e7]">
-        <CardContent className="pt-6">
-          <div className="space-y-3">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="h-5 w-5 text-[#c53032] mt-0.5 flex-shrink-0" />
-              <div className="space-y-2 text-sm">
-                <p className="text-[#7f1d1d]">
-                  <span className="font-medium">Note:</span> For this to work, we need to collect <span className="font-medium">Vehicle Daily Mileage</span> to calculate estimated service due date.
-                </p>
-                <p className="text-[#7f1d1d]">
-                  • Notification send-out should be limited by <span className="font-medium">Status type</span> - send to all overdue customers.
-                </p>
-                <p className="text-[#7f1d1d]">
-                  • Customers can <span className="font-medium">opt out/unsubscribe</span> from notifications/SMS/email.
-                </p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -598,31 +575,7 @@ export function Notifications() {
       {/* Notifications List */}
       <Card>
         <CardHeader>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <CardTitle>Job Cards</CardTitle>
-            <div className="flex gap-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="flex-1 sm:flex-none"
-                onClick={() => handleBulkSend('all', 'email')}
-                disabled={loading}
-              >
-                <Mail className="h-4 w-4 mr-2" />
-                Email All
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="flex-1 sm:flex-none"
-                onClick={() => handleBulkSend('all', 'whatsapp')}
-                disabled={loading}
-              >
-                <MessageSquare className="h-4 w-4 mr-2" />
-                WhatsApp All
-              </Button>
-            </div>
-          </div>
         </CardHeader>
         <CardContent>
           {notifications.length === 0 ? (
@@ -711,36 +664,11 @@ export function Notifications() {
                               <span className="hidden sm:inline">Email</span>
                             </Button>
                           )}
-                          {!notification.whatsappSent && notification.phone !== 'N/A' && (
-                            <Button 
-                              size="sm" 
-                              variant="outline" 
-                              className="h-8"
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                await handleSendWhatsApp(notification);
-                              }}
-                              disabled={sendingNotification === notification.id}
-                            >
-                              <MessageSquare className="h-3 w-3 mr-1" />
-                              <span className="hidden sm:inline">WhatsApp</span>
-                            </Button>
-                          )}
-                          {(notification.emailSent || notification.whatsappSent) && (
-                            <div className="flex gap-1">
                               {notification.emailSent && (
                                 <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
                                   <Mail className="h-3 w-3 mr-1" />
                                   Email Sent
                                 </Badge>
-                              )}
-                              {notification.whatsappSent && (
-                                <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
-                                  <MessageSquare className="h-3 w-3 mr-1" />
-                                  WhatsApp Sent
-                                </Badge>
-                              )}
-                            </div>
                           )}
                         </div>
                         <span className="text-xs text-gray-500">{formatTimeAgo(notification.timestamp)}</span>
@@ -754,35 +682,8 @@ export function Notifications() {
         </CardContent>
       </Card>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
-        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
-          <CardContent className="pt-6">
-            <Mail className="h-6 lg:h-8 w-6 lg:w-8 text-blue-600 mb-3" />
-            <h3 className="font-medium mb-2 text-sm lg:text-base">Email Templates</h3>
-            <p className="text-xs lg:text-sm text-gray-600 mb-4">Customize email reminder templates</p>
-            <Button variant="outline" size="sm">Manage Templates</Button>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-          <CardContent className="pt-6">
-            <MessageSquare className="h-6 lg:h-8 w-6 lg:w-8 text-green-600 mb-3" />
-            <h3 className="font-medium mb-2 text-sm lg:text-base">WhatsApp Integration</h3>
-            <p className="text-xs lg:text-sm text-gray-600 mb-4">Send reminders via WhatsApp</p>
-            <Button variant="outline" size="sm">Configure</Button>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
-          <CardContent className="pt-6">
-            <Calendar className="h-6 lg:h-8 w-6 lg:w-8 text-purple-600 mb-3" />
-            <h3 className="font-medium mb-2 text-sm lg:text-base">Auto Reminders</h3>
-            <p className="text-xs lg:text-sm text-gray-600 mb-4">Set up automatic reminder schedules</p>
-            <Button variant="outline" size="sm">Setup Rules</Button>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Confirm Dialog */}
+      <ConfirmDialog />
     </div>
   );
 }

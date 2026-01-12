@@ -12,11 +12,13 @@ import { AddInvoice } from "./components/AddInvoice";
 import { Reports } from "./components/Reports";
 import { Notifications } from "./components/Notifications";
 import { Settings } from "./components/Settings";
+import { Inventory } from "./components/Inventory";
 import { connectSocket, disconnectSocket } from "./lib/socket";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
 import { useAuth } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./routes/ProtectedRoute";
 import { PublicOnlyRoute } from "./routes/PublicOnlyRoute";
+import { jobsAPI } from "./api/client";
 
 // Login page wrapper
 function LoginPage() {
@@ -40,7 +42,6 @@ function AppLayout() {
   const { refreshTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
-  const [pageRefreshKey, setPageRefreshKey] = useState(0);
 
   // Connect socket and load theme when app mounts
   useEffect(() => {
@@ -50,35 +51,25 @@ function AppLayout() {
     }
   }, [user, refreshTheme]);
 
-  // Handle tab visibility and window focus - refresh auth and page when tab becomes visible
+  // Handle tab visibility and window focus - refresh auth only (no page refresh)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (!document.hidden && user) {
         // Tab became visible - refresh auth to ensure token is still valid
+        // Only refresh auth, don't force page refresh
         refreshAuth().catch(() => {
           // Silently fail - auth will be checked on next interaction
         });
-        
-        // Force page refresh by updating refresh key
-        setPageRefreshKey(prev => prev + 1);
-        
-        // Dispatch custom event to trigger page refresh
-        window.dispatchEvent(new CustomEvent('tabVisible'));
       }
     };
 
     const handleFocus = () => {
       if (user) {
-        // Window gained focus - refresh auth
+        // Window gained focus - refresh auth only
+        // Only refresh auth, don't force page refresh
         refreshAuth().catch(() => {
           // Silently fail - auth will be checked on next interaction
         });
-        
-        // Force page refresh by updating refresh key
-        setPageRefreshKey(prev => prev + 1);
-        
-        // Dispatch custom event to trigger page refresh
-        window.dispatchEvent(new CustomEvent('tabVisible'));
       }
     };
 
@@ -113,33 +104,37 @@ function AppLayout() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route 
           path="/dashboard" 
-          element={<Dashboard key={`dashboard-${pageRefreshKey}`} onNavigate={handleNavigate} />} 
+          element={<Dashboard onNavigate={handleNavigate} />} 
         />
         <Route 
           path="/customers" 
-          element={<Customers key={`customers-${pageRefreshKey}`} onNavigate={handleNavigate} />} 
+          element={<Customers onNavigate={handleNavigate} />} 
         />
         <Route 
           path="/vehicles" 
-          element={<Vehicles key={`vehicles-${pageRefreshKey}`} />} 
+          element={<Vehicles />} 
         />
         <Route 
           path="/invoices" 
-          element={<Invoices key={`invoices-${pageRefreshKey}`} />} 
+          element={<Invoices />} 
         />
         <Route 
           path="/job-cards" 
-          element={<JobCards key={`job-cards-${pageRefreshKey}`} />} 
+          element={<JobCards />} 
         />
         <Route 
           path="/create-job-card" 
           element={
             <JobCardDetail
-              key={`create-job-card-${pageRefreshKey}`}
-              onClose={() => navigate("/dashboard")}
-              onSave={(data) => {
-                console.log("Job card created:", data);
-                navigate("/job-cards");
+              onClose={() => navigate("/job-cards")}
+              onSave={async (data) => {
+                try {
+                  await jobsAPI.create(data);
+                  navigate("/job-cards");
+                } catch (err: any) {
+                  console.error("Failed to create job:", err);
+                  alert(err.message || "Failed to create job. Please try again.");
+                }
               }}
               userRole={user?.role || "Admin"}
             />
@@ -147,29 +142,23 @@ function AppLayout() {
         />
         <Route 
           path="/create-invoice" 
-          element={
-            <AddInvoice
-              key={`create-invoice-${pageRefreshKey}`}
-              onClose={() => navigate("/dashboard")}
-              onSubmit={(data) => {
-                console.log("Invoice created:", data);
-                navigate("/invoices");
-              }}
-              userRole={user?.role || "Admin"}
-            />
-          } 
+          element={<Navigate to="/invoices?tab=create" replace />} 
+        />
+        <Route 
+          path="/inventory" 
+          element={<Inventory />} 
         />
         <Route 
           path="/reports" 
-          element={<Reports key={`reports-${pageRefreshKey}`} />} 
+          element={<Reports />} 
         />
         <Route 
           path="/notifications" 
-          element={<Notifications key={`notifications-${pageRefreshKey}`} />} 
+          element={<Notifications />} 
         />
         <Route 
           path="/settings" 
-          element={<Settings key={`settings-${pageRefreshKey}`} userRole={user?.role || "Admin"} />} 
+          element={<Settings userRole={user?.role || "Admin"} />} 
         />
         {/* Fallback for unknown routes within protected area */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

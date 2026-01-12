@@ -47,13 +47,24 @@ import {
   ArrowLeft,
   Loader2,
 } from "lucide-react";
-import { vehiclesAPI, serviceHistoryAPI } from "../api/client";
+import { vehiclesAPI, serviceHistoryAPI, customersAPI } from "../api/client";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 
 interface CustomerProfileProps {
   customer: any;
   onClose?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onNavigate?: (page: string) => void;
 }
 
 const getOilChangeDetails = (service: any) => {
@@ -81,7 +92,9 @@ export function CustomerProfile({
   onClose,
   onEdit,
   onDelete,
+  onNavigate,
 }: CustomerProfileProps) {
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [activeTab, setActiveTab] = useState("overview");
   const [newNote, setNewNote] = useState("");
@@ -89,6 +102,29 @@ export function CustomerProfile({
   const [serviceHistory, setServiceHistory] = useState<any[]>([]);
   const [loadingVehicles, setLoadingVehicles] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [showAddVehicleDialog, setShowAddVehicleDialog] = useState(false);
+  const [showEditVehicleDialog, setShowEditVehicleDialog] = useState(false);
+  const [vehicleToEdit, setVehicleToEdit] = useState<any>(null);
+  const [vehicleToDelete, setVehicleToDelete] = useState<any>(null);
+  const [showDeleteVehicleDialog, setShowDeleteVehicleDialog] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
+  const [savingVehicle, setSavingVehicle] = useState(false);
+  const [newVehicleForm, setNewVehicleForm] = useState({
+    make: "",
+    model: "",
+    year: "",
+    plateNo: "",
+    mileage: "",
+    oilType: "",
+  });
+  const [editVehicleForm, setEditVehicleForm] = useState({
+    make: "",
+    model: "",
+    year: "",
+    plateNo: "",
+    mileage: "",
+    oilType: "",
+  });
 
   const customerId = customer._id || customer.id;
 
@@ -133,10 +169,227 @@ export function CustomerProfile({
     .join("")
     .toUpperCase() || 'N/A';
 
-  const handleAddNote = () => {
-    if (newNote.trim()) {
-      // Add note logic here
-      setNewNote("");
+  const handleAddNote = async () => {
+    if (!newNote.trim()) {
+      toast.error("Please enter a note");
+      return;
+    }
+
+    try {
+      setSavingNote(true);
+      const currentNotes = customer.notes || "";
+      const updatedNotes = currentNotes 
+        ? `${currentNotes}\n\n[${new Date().toLocaleString()}] ${newNote.trim()}`
+        : `[${new Date().toLocaleString()}] ${newNote.trim()}`;
+      
+      const response = await customersAPI.update(customerId, {
+        notes: updatedNotes,
+      });
+
+      if (response.success) {
+        toast.success("Note added successfully");
+        setNewNote("");
+        // Update customer object locally
+        customer.notes = updatedNotes;
+      } else {
+        toast.error(response.message || "Failed to add note");
+      }
+    } catch (err: any) {
+      console.error("Failed to add note:", err);
+      toast.error(err.message || "Failed to add note. Please try again.");
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const handleScheduleService = () => {
+    // Navigate to create job card with customer pre-selected
+    if (onNavigate) {
+      onNavigate(`create-job-card?customerId=${customerId}`);
+    } else {
+      navigate(`/create-job-card?customerId=${customerId}`);
+    }
+  };
+
+  const handleViewInvoices = () => {
+    // Navigate to invoices with customer filter
+    if (onNavigate) {
+      onNavigate(`invoices?customer=${customerId}`);
+    } else {
+      navigate(`/invoices?customer=${customerId}`);
+    }
+  };
+
+  const handleSendMessage = () => {
+    // Get customer phone number
+    const phone = customer.phone;
+    
+    if (!phone) {
+      toast.error("Customer doesn't have a phone number");
+      return;
+    }
+
+    // Format phone number for WhatsApp (remove any non-digit characters except +)
+    let formattedPhone = phone.replace(/[^\d+]/g, '');
+    
+    // If phone doesn't start with +, assume it's a local number and add country code
+    // You may need to adjust this based on your country code
+    if (!formattedPhone.startsWith('+')) {
+      // Default to Pakistan country code (+92) if no country code is present
+      // Remove leading 0 if present (common in local Pakistani numbers)
+      formattedPhone = formattedPhone.replace(/^0/, '');
+      formattedPhone = '+92' + formattedPhone;
+    }
+
+    // Create a default message
+    const defaultMessage = `Hello ${customer.name}, this is from Momentum Auto Works. How can we assist you today?`;
+    
+    // Encode the message for URL
+    const encodedMessage = encodeURIComponent(defaultMessage);
+    
+    // Open WhatsApp Web with the phone number and message
+    const whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodedMessage}`;
+    window.open(whatsappUrl, '_blank');
+  };
+
+  const handleNewService = () => {
+    if (onNavigate) {
+      onNavigate(`create-job-card?customerId=${customerId}`);
+    } else {
+      navigate(`/create-job-card?customerId=${customerId}`);
+    }
+  };
+
+  const openAddVehicleDialog = () => {
+    setNewVehicleForm({
+      make: "",
+      model: "",
+      year: "",
+      plateNo: "",
+      mileage: "",
+      oilType: "",
+    });
+    setShowAddVehicleDialog(true);
+  };
+
+  const openEditVehicleDialog = (vehicle: any) => {
+    setVehicleToEdit(vehicle);
+    setEditVehicleForm({
+      make: vehicle.make || "",
+      model: vehicle.model || "",
+      year: vehicle.year?.toString() || "",
+      plateNo: vehicle.plateNo || "",
+      mileage: vehicle.mileage?.toString() || "",
+      oilType: vehicle.oilType || "",
+    });
+    setShowEditVehicleDialog(true);
+  };
+
+  const handleSaveVehicle = async () => {
+    if (!newVehicleForm.make.trim() || !newVehicleForm.model.trim() || !newVehicleForm.year.trim() || !newVehicleForm.plateNo.trim()) {
+      toast.error("Please fill in all required fields (Make, Model, Year, Plate Number)");
+      return;
+    }
+
+    try {
+      setSavingVehicle(true);
+      const response = await vehiclesAPI.create({
+        customer: customerId,
+        make: newVehicleForm.make.trim(),
+        model: newVehicleForm.model.trim(),
+        year: parseInt(newVehicleForm.year.trim()),
+        plateNo: newVehicleForm.plateNo.trim(),
+        mileage: newVehicleForm.mileage ? parseInt(newVehicleForm.mileage) : 0,
+        oilType: newVehicleForm.oilType || undefined,
+        status: 'Active',
+      });
+
+      if (response.success) {
+        toast.success("Vehicle added successfully");
+        setShowAddVehicleDialog(false);
+        setNewVehicleForm({
+          make: "",
+          model: "",
+          year: "",
+          plateNo: "",
+          mileage: "",
+          oilType: "",
+        });
+        fetchVehicles();
+      } else {
+        toast.error(response.message || "Failed to add vehicle");
+      }
+    } catch (err: any) {
+      console.error("Failed to add vehicle:", err);
+      toast.error(err.message || "Failed to add vehicle. Please try again.");
+    } finally {
+      setSavingVehicle(false);
+    }
+  };
+
+  const handleUpdateVehicle = async () => {
+    if (!vehicleToEdit) return;
+    if (!editVehicleForm.make.trim() || !editVehicleForm.model.trim() || !editVehicleForm.year.trim() || !editVehicleForm.plateNo.trim()) {
+      toast.error("Please fill in all required fields (Make, Model, Year, Plate Number)");
+      return;
+    }
+
+    try {
+      setSavingVehicle(true);
+      const response = await vehiclesAPI.update(vehicleToEdit._id || vehicleToEdit.id, {
+        make: editVehicleForm.make.trim(),
+        model: editVehicleForm.model.trim(),
+        year: parseInt(editVehicleForm.year.trim()),
+        plateNo: editVehicleForm.plateNo.trim(),
+        mileage: editVehicleForm.mileage ? parseInt(editVehicleForm.mileage) : 0,
+        oilType: editVehicleForm.oilType || undefined,
+      });
+
+      if (response.success) {
+        toast.success("Vehicle updated successfully");
+        setShowEditVehicleDialog(false);
+        setVehicleToEdit(null);
+        fetchVehicles();
+      } else {
+        toast.error(response.message || "Failed to update vehicle");
+      }
+    } catch (err: any) {
+      console.error("Failed to update vehicle:", err);
+      toast.error(err.message || "Failed to update vehicle. Please try again.");
+    } finally {
+      setSavingVehicle(false);
+    }
+  };
+
+  const handleDeleteVehicle = async () => {
+    if (!vehicleToDelete) return;
+
+    try {
+      setSavingVehicle(true);
+      const response = await vehiclesAPI.delete(vehicleToDelete._id || vehicleToDelete.id);
+      
+      if (response.success) {
+        toast.success("Vehicle removed successfully");
+        setShowDeleteVehicleDialog(false);
+        setVehicleToDelete(null);
+        fetchVehicles();
+      } else {
+        toast.error(response.message || "Failed to remove vehicle");
+      }
+    } catch (err: any) {
+      console.error("Failed to delete vehicle:", err);
+      toast.error(err.message || "Failed to remove vehicle. Please try again.");
+    } finally {
+      setSavingVehicle(false);
+    }
+  };
+
+  const handleScheduleServiceForVehicle = (vehicle: any) => {
+    const vehicleId = vehicle._id || vehicle.id;
+    if (onNavigate) {
+      onNavigate(`create-job-card?customerId=${customerId}&vehicleId=${vehicleId}`);
+    } else {
+      navigate(`/create-job-card?customerId=${customerId}&vehicleId=${vehicleId}`);
     }
   };
 
@@ -200,6 +453,7 @@ export function CustomerProfile({
             size={isMobile ? "icon" : "default"}
             className="bg-[#c53032] text-white border-[#c53032] hover:bg-[#a6212a] hover:text-white"
             title="New Service"
+            onClick={handleNewService}
           >
             <Plus className="h-4 w-4 md:mr-2" />
             {!isMobile && <span>New Service</span>}
@@ -331,15 +585,27 @@ export function CustomerProfile({
                   Quick Actions
                 </h3>
                 <div className="space-y-2">
-                  <Button variant="outline" className="w-full justify-start text-sm">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={handleScheduleService}
+                  >
                     <Wrench className="h-4 w-4 mr-2" />
                     Schedule Service
                   </Button>
-                  <Button variant="outline" className="w-full justify-start text-sm">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={handleViewInvoices}
+                  >
                     <FileText className="h-4 w-4 mr-2" />
                     View Invoices
                   </Button>
-                  <Button variant="outline" className="w-full justify-start text-sm">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={handleSendMessage}
+                  >
                     <MessageSquare className="h-4 w-4 mr-2" />
                     Send Message
                   </Button>
@@ -400,7 +666,7 @@ export function CustomerProfile({
                     <Card className="p-4 md:p-6">
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="font-medium text-sm md:text-base">Vehicles ({vehicles.length})</h3>
-                        <Button size="sm" variant="outline" className="text-xs md:text-sm">
+                        <Button size="sm" variant="outline" className="text-xs md:text-sm" onClick={openAddVehicleDialog}>
                           <Plus className="h-3 w-3 md:h-4 md:w-4 md:mr-2" />
                           <span className="hidden md:inline">Add</span>
                         </Button>
@@ -579,7 +845,7 @@ export function CustomerProfile({
                           Manage all vehicles registered to this customer
                         </p>
                       </div>
-                      <Button className="bg-[#c53032] hover:bg-[#a6212a] w-full md:w-auto">
+                      <Button className="bg-[#c53032] hover:bg-[#a6212a] w-full md:w-auto" onClick={openAddVehicleDialog}>
                         <Plus className="h-4 w-4 mr-2" />
                         Add Vehicle
                       </Button>
@@ -618,15 +884,21 @@ export function CustomerProfile({
                                       </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
-                                      <DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => openEditVehicleDialog(vehicle)}>
                                         <Edit className="h-4 w-4 mr-2" />
                                         Edit Vehicle
                                       </DropdownMenuItem>
-                                      <DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleScheduleServiceForVehicle(vehicle)}>
                                         <Wrench className="h-4 w-4 mr-2" />
                                         Schedule Service
                                       </DropdownMenuItem>
-                                      <DropdownMenuItem className="text-red-600">
+                                      <DropdownMenuItem 
+                                        className="text-red-600"
+                                        onClick={() => {
+                                          setVehicleToDelete(vehicle);
+                                          setShowDeleteVehicleDialog(true);
+                                        }}
+                                      >
                                         <Trash2 className="h-4 w-4 mr-2" />
                                         Remove Vehicle
                                       </DropdownMenuItem>
@@ -807,9 +1079,19 @@ export function CustomerProfile({
                         <Button
                           onClick={handleAddNote}
                           className="bg-[#c53032] hover:bg-[#a6212a]"
+                          disabled={savingNote}
                         >
-                          <MessageSquare className="h-4 w-4 mr-2" />
-                          Add Note
+                          {savingNote ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              <MessageSquare className="h-4 w-4 mr-2" />
+                              Add Note
+                            </>
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -834,6 +1116,230 @@ export function CustomerProfile({
           </Tabs>
         </div>
       </div>
+
+      {/* Add Vehicle Dialog */}
+      <Dialog open={showAddVehicleDialog} onOpenChange={setShowAddVehicleDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Vehicle</DialogTitle>
+            <DialogDescription>
+              Add a new vehicle for {customer.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="make">Make *</Label>
+              <Input
+                id="make"
+                value={newVehicleForm.make}
+                onChange={(e) => setNewVehicleForm({ ...newVehicleForm, make: e.target.value })}
+                placeholder="e.g., Honda"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="model">Model *</Label>
+              <Input
+                id="model"
+                value={newVehicleForm.model}
+                onChange={(e) => setNewVehicleForm({ ...newVehicleForm, model: e.target.value })}
+                placeholder="e.g., City"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="year">Year *</Label>
+                <Input
+                  id="year"
+                  type="number"
+                  value={newVehicleForm.year}
+                  onChange={(e) => setNewVehicleForm({ ...newVehicleForm, year: e.target.value })}
+                  placeholder="e.g., 2020"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="plateNo">Plate Number *</Label>
+                <Input
+                  id="plateNo"
+                  value={newVehicleForm.plateNo}
+                  onChange={(e) => setNewVehicleForm({ ...newVehicleForm, plateNo: e.target.value })}
+                  placeholder="e.g., ABC-123"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="mileage">Mileage (km)</Label>
+                <Input
+                  id="mileage"
+                  type="number"
+                  value={newVehicleForm.mileage}
+                  onChange={(e) => setNewVehicleForm({ ...newVehicleForm, mileage: e.target.value })}
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="oilType">Oil Type</Label>
+                <Input
+                  id="oilType"
+                  value={newVehicleForm.oilType}
+                  onChange={(e) => setNewVehicleForm({ ...newVehicleForm, oilType: e.target.value })}
+                  placeholder="e.g., 5W-30"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddVehicleDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleSaveVehicle} 
+              className="bg-[#c53032] hover:bg-[#a6212a]"
+              disabled={savingVehicle}
+            >
+              {savingVehicle ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Add Vehicle"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Vehicle Dialog */}
+      <Dialog open={showEditVehicleDialog} onOpenChange={setShowEditVehicleDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Vehicle</DialogTitle>
+            <DialogDescription>
+              Update vehicle information
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-make">Make *</Label>
+              <Input
+                id="edit-make"
+                value={editVehicleForm.make}
+                onChange={(e) => setEditVehicleForm({ ...editVehicleForm, make: e.target.value })}
+                placeholder="e.g., Honda"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-model">Model *</Label>
+              <Input
+                id="edit-model"
+                value={editVehicleForm.model}
+                onChange={(e) => setEditVehicleForm({ ...editVehicleForm, model: e.target.value })}
+                placeholder="e.g., City"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-year">Year *</Label>
+                <Input
+                  id="edit-year"
+                  type="number"
+                  value={editVehicleForm.year}
+                  onChange={(e) => setEditVehicleForm({ ...editVehicleForm, year: e.target.value })}
+                  placeholder="e.g., 2020"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-plateNo">Plate Number *</Label>
+                <Input
+                  id="edit-plateNo"
+                  value={editVehicleForm.plateNo}
+                  onChange={(e) => setEditVehicleForm({ ...editVehicleForm, plateNo: e.target.value })}
+                  placeholder="e.g., ABC-123"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-mileage">Mileage (km)</Label>
+                <Input
+                  id="edit-mileage"
+                  type="number"
+                  value={editVehicleForm.mileage}
+                  onChange={(e) => setEditVehicleForm({ ...editVehicleForm, mileage: e.target.value })}
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-oilType">Oil Type</Label>
+                <Input
+                  id="edit-oilType"
+                  value={editVehicleForm.oilType}
+                  onChange={(e) => setEditVehicleForm({ ...editVehicleForm, oilType: e.target.value })}
+                  placeholder="e.g., 5W-30"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditVehicleDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpdateVehicle} 
+              className="bg-[#c53032] hover:bg-[#a6212a]"
+              disabled={savingVehicle}
+            >
+              {savingVehicle ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Update Vehicle"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Vehicle Confirmation Dialog */}
+      <Dialog open={showDeleteVehicleDialog} onOpenChange={setShowDeleteVehicleDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove Vehicle</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to remove this vehicle? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {vehicleToDelete && (
+            <div className="py-4">
+              <p className="text-sm text-slate-600">
+                <strong>{vehicleToDelete.make} {vehicleToDelete.model}</strong> ({vehicleToDelete.year}) - {vehicleToDelete.plateNo}
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteVehicleDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleDeleteVehicle} 
+              className="bg-red-600 hover:bg-red-700 text-white"
+              disabled={savingVehicle}
+            >
+              {savingVehicle ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Removing...
+                </>
+              ) : (
+                "Remove Vehicle"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
